@@ -5,19 +5,30 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Révision DEMS</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='4' fill='%23fff' stroke='%23c9d0dc'/%3E%3Cpath d='M1 9H31M1 16H31M1 23H31M12 1V31M19 1V31M26 1V31' stroke='%23e3e8f0'/%3E%3Cpath d='M6 1V31' stroke='%23e9938c' stroke-width='1.5'/%3E%3Cpath d='M8 5C10 14 13 19.5 17.5 21.8S25 24.6 29 25.2' fill='none' stroke='%232741ae' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="fichiers/app.css">
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <!-- marque : un carreau de cahier, la marge rouge et une courbe de décroissance radioactive tracée à l'encre -->
+  <symbol id="mark" viewBox="0 0 32 32">
+    <rect x="1" y="1" width="30" height="30" rx="4" fill="var(--surface)" stroke="var(--line)"/>
+    <path d="M1 9H31M1 16H31M1 23H31M12 1V31M19 1V31M26 1V31" stroke="var(--line)" stroke-width=".8" opacity=".75"/>
+    <path d="M6 1.5V30.5" stroke="var(--margin)" stroke-width="1.5"/>
+    <path d="M8 5C10 14 13 19.5 17.5 21.8S25 24.6 29 25.2" fill="none" stroke="var(--teal)" stroke-width="2.6" stroke-linecap="round"/>
+  </symbol>
+</svg>
 <div class="app" id="app">
-  <header class="topbar"><b>Révision DEMS</b><button class="btn" id="bmenu" aria-label="Ouvrir le menu">Menu</button></header>
+  <header class="topbar"><a href="#/"><svg class="mark"><use href="#mark"/></svg>Révision DEMS</a><button class="btn" id="bmenu" aria-label="Ouvrir le menu">Menu</button></header>
   <aside class="side" aria-label="Navigation">
-    <div class="brand"><a href="#/">Révision DEMS</a><span class="exam num" id="examline"></span></div>
+    <div class="brand"><a href="#/"><svg class="mark"><use href="#mark"/></svg>Révision DEMS</a><span class="exam num" id="examline"></span></div>
     <form class="search" id="sform" role="search"><input id="q" type="search" placeholder="Rechercher dans les fiches" aria-label="Rechercher dans les fiches"></form>
     <nav class="nav" id="nav"></nav>
     <div class="tree" id="tree"></div>
     <div class="side-foot"><span id="pomo"></span><span>Touche / pour chercher</span></div>
   </aside>
   <main class="main" id="main"></main>
+  <aside class="scans" id="scans" role="dialog" aria-modal="false" aria-label="Pages manuscrites d’origine" hidden></aside>
 </div>
 <script src="fichiers/donnees.js"></script>
 <script src="fichiers/app.js"></script>

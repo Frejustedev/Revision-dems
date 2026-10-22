@@ -195,10 +195,8 @@
     var seen = Object.keys(mem.cards).filter(function (c) { return CARD[c] && mem.cards[c].reps > 0; }).length;
     var solid = Object.keys(mem.cards).filter(function (c) { return CARD[c] && mem.cards[c].int >= 21; }).length;
     var h = '<div class="page wide">';
-    h += '<div class="hero"><div class="days" aria-label="jours avant l’examen">' + (d >= 0 ? d : 0) + '</div><div class="what"><strong>' +
-      (d === 1 ? 'jour avant l’examen' : 'jours avant l’examen') + '</strong><span class="muted">Phase ' + ph.n + ' : ' + ph.name.toLowerCase() + ', jusqu’au ' + fdate(ph.to).replace(/\.$/, '') + '. ' + esc(ph.what) + '</span></div></div>';
+    h += heroHtml(d, ph, progPanel());
 
-    h += progPanel();
     h += '<div class="today">';
     // apprendre
     var fpa = featuredProg(), inProg = fpa && fpa.st === 0;
@@ -245,6 +243,7 @@
     h += '<div class="stats"><span><b>' + learned + '</b> / ' + ORDER.length + ' fiches apprises</span><span><b>' + seen + '</b> / ' + D.cards.length + ' questions travaillées</span><span><b>' + solid + '</b> questions solides (intervalle ≥ 3 semaines)</span></div>';
     h += '<details class="guide"><summary>Comment utiliser ce site</summary><ol>' +
       '<li><b>Apprendre</b> : ouvrez la fiche proposée, lisez « À retenir », puis la fiche. Tranchez les mentions [à vérifier] au fur et à mesure.</li>' +
+      '<li><b>Comparer</b> : un doute sur une valeur ou un mot déduit ? Le bouton « Manuscrit » (ou la vignette à droite du titre) ouvre vos pages d’origine à côté de la fiche.</li>' +
       '<li><b>Réciter</b> : activez le mode plan, récitez chaque partie de tête, cliquez sur le titre pour vérifier.</li>' +
       '<li><b>Valider</b> : cliquez sur « J’ai appris cette fiche ». Ses questions entrent dans la révision espacée et des relectures sont prévues à J+1, J+7 et J+21.</li>' +
       '<li><b>Réviser chaque jour</b> : faites les questions arrivées à échéance et 10 minutes de chiffres. La carte de fixation chauffe à mesure que vous maîtrisez.</li>' +
@@ -254,6 +253,85 @@
     main.innerHTML = h;
   }
 
+
+  /* compte à rebours et calendrier à petits carreaux : jours passés barrés, programme surligné, examen entouré */
+  var MOISL = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  function heroHtml(d, ph, extra) {
+    var t = today(), e = mem.exam, ps = phases(), ed = parse(e);
+    var h = '<section class="hero"><div><div class="count"><span class="days num">' + Math.max(0, d) + '</span><span class="unit">' +
+      (d < 0 ? 'examen passé' : d === 1 ? 'jour avant l’examen' : d === 0 ? 'c’est le jour de l’examen' : 'jours avant l’examen') +
+      '<span>' + cap(JOURS[ed.getDay()]) + ' ' + ed.getDate() + ' ' + MOISL[ed.getMonth()] + '</span></span></div>' +
+      '<p class="phase"><b>Phase ' + ph.n + ' : ' + ph.name.toLowerCase() + '</b>, jusqu’au ' + fdate(ph.to).replace(/\.$/, '') + '. ' + esc(ph.what) + '</p>' + (extra || '') + '</div>';
+    h += calHtml(t, e, ps) + '</section>';
+    return h;
+  }
+  function calHtml(t, e, ps) {
+    if (e < t) return '';
+    var from = mem.start && mem.start < t ? (diff(mem.start, t) > 14 ? addDays(t, -14) : mem.start) : t;
+    from = addDays(from, -((parse(from).getDay() + 6) % 7));
+    var to = addDays(e, (7 - parse(e).getDay()) % 7);
+    var pdays = {}, pname = '';
+    progs().forEach(function (p) {
+      if (progEnd(p) < t) return;
+      if (!pname) pname = p.court || p.titre;
+      p.jours.forEach(function (j, i) { pdays[progDate(p, i)] = (p.court || p.titre) + ', jour ' + (i + 1) + ' : ' + j.titre; });
+    });
+    var h = '<div><div class="cal" aria-hidden="true"><span></span>' + ['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(function (x) { return '<span class="wd">' + x + '</span>'; }).join('');
+    for (var w = from; w <= to; w = addDays(w, 7)) {
+      var lab = '';
+      for (var k = 0; k < 7; k++) { var dd = addDays(w, k), pd = parse(dd); if (pd.getDate() === 1 || (w === from && k === 0)) { lab = MOIS[pd.getMonth()]; break; } }
+      h += '<span class="mo">' + lab + '</span>';
+      for (var k2 = 0; k2 < 7; k2++) {
+        var day = addDays(w, k2), cls = ['sq'], tip = cap(wday(day)) + ' ' + fdate(day);
+        if (day > e) { h += '<span class="sq off"></span>'; continue; }
+        if (day < t) {
+          cls.push('past'); var lg = mem.log[day];
+          if (lg && Object.keys(lg).some(function (x) { return lg[x] > 0; })) { cls.push('act'); tip += ' : travail enregistré'; }
+        } else if (day === e) { cls.push('exam'); tip += ' : examen'; }
+        else if (day >= ps[2].from) cls.push('p3');
+        else if (day >= ps[1].from) cls.push('p2');
+        if (pdays[day]) { cls.push('prog'); tip += ' : ' + pdays[day]; }
+        if (day === t) { cls.push('now'); tip += ' (aujourd’hui)'; }
+        h += '<span class="' + cls.join(' ') + '" title="' + esc(tip) + '">' + parse(day).getDate() + '</span>';
+      }
+    }
+    h += '</div><div class="callegend"><span><i class="k-now"></i>aujourd’hui</span>' + (pname ? '<span><i class="k-prog"></i>' + esc(pname) + '</span>' : '') +
+      '<span><i class="k-p2"></i>2e passage dès le ' + fdate(ps[1].from).replace(/\.$/, '') + '</span><span><i class="k-p3"></i>consolidation dès le ' + fdate(ps[2].from).replace(/\.$/, '') + '</span><span><i class="k-exam"></i>examen</span></div></div>';
+    return h;
+  }
+
+
+  /* ------------------------------------------------------------------ pages manuscrites d'origine */
+  var scanFid = null, scanZoom = false;
+  function scanSrc(dir, n) { return 'fichiers/scans/' + dir + '/p' + ('00' + n).slice(-3) + '.webp'; }
+  function openScans(fid, keepScroll) {
+    var f = F[fid], box = $('#scans'); if (!f || !f.scan) return;
+    var dir = f.scan[0], pg = f.scan[1], same = scanFid === fid && !box.hidden;
+    scanFid = fid;
+    if (!same) {
+      box.innerHTML = '<header><div class="ttl"><b>Manuscrit d’origine</b><span>« ' + esc(f.src) + ' », ' + (pg.length > 1 ? 'pages ' : 'page ') + esc(f.pages.replace(/-/g, '–')) + '</span></div>' +
+        '<button class="sbtn" id="szoom" aria-pressed="' + scanZoom + '">' + (scanZoom ? 'Réduire' : 'Agrandir') + '</button><button class="sbtn" id="sclose">Fermer</button></header>' +
+        (pg.length > 1 ? '<div class="jump"><span>Page</span>' + pg.map(function (n) { return '<button class="sbtn" data-p="' + n + '" style="padding:1px 8px">' + n + '</button>'; }).join('') + '</div>' : '') +
+        '<div class="pages" tabindex="0">' + pg.map(function (n) {
+          var rk = dir + '/' + n, rot = (mem.scanRot || {})[rk];
+          return '<figure id="sp-' + n + '"' + (rot ? ' class="rot"' : '') + '><div class="im"><img src="' + scanSrc(dir, n) + '" loading="lazy" width="1100" height="1557" alt="Page ' + n + ' des notes manuscrites « ' + esc(f.src) + ' »"></div><figcaption><span>Page ' + n + '</span><span><button class="linkbtn srot" data-k="' + rk + '">Pivoter la page</button> <a href="' + scanSrc(dir, n) + '" target="_blank">Ouvrir l’image seule</a></span></figcaption></figure>';
+        }).join('') + '</div>';
+      box.classList.toggle('zoom', scanZoom);
+      $('#sclose', box).addEventListener('click', function () { closeScans(); });
+      $('#szoom', box).addEventListener('click', function () { scanZoom = !scanZoom; box.classList.toggle('zoom', scanZoom); this.setAttribute('aria-pressed', scanZoom); this.textContent = scanZoom ? 'Réduire' : 'Agrandir'; });
+      $$('.srot', box).forEach(function (b) { b.addEventListener('click', function () { var fg = b.closest('figure'), on = fg.classList.toggle('rot'); mem.scanRot = mem.scanRot || {}; if (on) mem.scanRot[b.dataset.k] = 1; else delete mem.scanRot[b.dataset.k]; save(); }); });
+      $$('.jump button', box).forEach(function (b) { b.addEventListener('click', function () { var fg = $('#sp-' + b.dataset.p, box); if (fg) $('.pages', box).scrollTop = fg.offsetTop - $('.pages', box).offsetTop - 8; }); });
+      if (!keepScroll || box.hidden) $('.pages', box).scrollTop = 0;
+    }
+    box.hidden = false; app.classList.add('scans-open');
+    var b = $('#bscan'); if (b) { b.setAttribute('aria-pressed', 'true'); b.classList.add('on'); }
+    if (!keepScroll) $('#sclose', box).focus();
+  }
+  function closeScans(silent) {
+    var box = $('#scans'); box.hidden = true; app.classList.remove('scans-open'); scanFid = null;
+    var b = $('#bscan'); if (b) { b.setAttribute('aria-pressed', 'false'); b.classList.remove('on'); if (!silent) b.focus(); }
+  }
+
   /* ------------------------------------------------------------------ page : fiche */
   function pageFiche(fid, anchor, params) {
     var f = F[fid]; if (!f) { main.innerHTML = '<div class="page"><p class="empty">Fiche introuvable.</p></div>'; return; }
@@ -261,18 +339,22 @@
     var idx = TREE_ORDER.indexOf(fid), prev = TREE_ORDER[idx - 1], next = TREE_ORDER[idx + 1];
     var h = '<div class="page">';
     h += '<div class="crumbs"><a href="#/theme/' + t.id + '">' + esc(c.name) + (c.themes.length > 1 ? ' / ' + esc(t.short) : '') + '</a>' + (f.group ? ' / ' + esc(f.group) : '') + '</div>';
-    h += '<div class="fiche-head"><h1 class="title">' + f.th + '</h1><div class="meta">' + (f.src === 'Synthèse transversale' ? 'Synthèse construite à partir de toutes vos fiches. Les mentions « réf. » sont des compléments absents de vos notes' : 'Notes manuscrites « ' + esc(f.src) + ' », pages ' + esc(f.pages.replace(/-/g, '–'))) + (f.sub ? '. ' + esc(f.sub) : '.') + '</div></div>';
+    h += '<div class="fiche-head"><div><h1 class="title">' + f.th + '</h1><div class="meta">' + (f.src === 'Synthèse transversale' ? 'Synthèse construite à partir de toutes vos fiches. Les mentions « réf. » sont des compléments absents de vos notes' : 'Notes manuscrites « ' + esc(f.src) + ' », pages ' + esc(f.pages.replace(/-/g, '–'))) + (f.sub ? '. ' + esc(f.sub) : '.') + (f.pdf ? ' <a class="pdfl" target="_blank" href="' + f.pdf + '">Fiche en PDF</a>' : '') + '</div></div>' +
+      (f.scan ? '<button class="thumb" id="bthumb" title="Voir les pages manuscrites d’origine"><span class="stack"><img src="' + scanSrc(f.scan[0], f.scan[1][0]) + '" alt="" loading="lazy"></span><b>' + plural(f.scan[1].length, 'page') + ' du cahier</b></button>' : '') + '</div>';
     h += '<div class="toolbar row">';
-    h += '<button class="btn" id="bplan" aria-pressed="false">Mode plan</button><span class="status planhint" id="planhint" hidden>Récitez chaque partie de tête, puis cliquez sur son titre pour vérifier.</span>';
-    h += st.learned ? '<span class="status">Apprise le ' + fdate(st.learned) + '</span>' : '<button class="btn primary" id="blearn">J’ai appris cette fiche</button>';
+    h += st.learned ? '<span class="status learned">Apprise le ' + fdate(st.learned) + '</span>' : '<button class="btn primary" id="blearn">J’ai appris cette fiche</button>';
+    h += '<span class="tgroup"><button class="btn" id="bplan" aria-pressed="false">Mode plan</button>';
+    if (f.html.indexOf('<table') >= 0) h += '<button class="btn" id="btabs" aria-pressed="false">Tableaux à trous</button>';
+    h += '</span><span class="tgroup">';
     if (f.cards.length) h += '<a class="btn" href="#/revision?f=' + fid + '">Questions (' + f.cards.length + ')</a>';
     if ((QBYF[fid] || []).length) h += '<a class="btn" href="#/qcm?s=f:' + fid + '&n=tout&go=1">QCM (' + QBYF[fid].length + ')</a>';
-    (SBYF[fid] || []).slice(0, 1).forEach(function (sid) { h += '<a class="btn" href="#/sujet/' + sid + '">Sujet rédactionnel</a>'; });
-    if (f.pdf) h += '<a class="btn" target="_blank" href="' + f.pdf + '">PDF</a>';
-    if (f.html.indexOf('<table') >= 0) h += '<button class="btn" id="btabs" aria-pressed="false">Tableaux à compléter</button>';
+    (SBYF[fid] || []).slice(0, 1).forEach(function (sid) { h += '<a class="btn" href="#/sujet/' + sid + '">Sujet</a>'; });
+    h += '</span><span class="tgroup">';
+    if (f.scan) h += '<button class="btn" id="bscan" aria-pressed="false" aria-controls="scans">Manuscrit</button>';
+    h += '</span>';
     var rr = rereadsDue().filter(function (r) { return r.f === fid; })[0];
     if (rr) h += '<button class="btn" id="breread">Relecture J+' + rr.step + ' faite</button>';
-    h += '</div>';
+    h += '</div><p class="status planhint" id="planhint" hidden>Récitez chaque partie de tête, puis cliquez sur son titre pour vérifier.</p>';
     h += '<article class="fiche" id="art">' + f.html + '</article>';
     h += '<div class="notes"><label for="notes"><b>Mes notes</b> <span class="muted small">(corrections après vérification, moyens mnémotechniques…)</span></label><textarea id="notes">' + esc(st.notes || '') + '</textarea></div>';
     h += '<div class="pager">' + (prev ? '<a href="' + link(prev) + '">Précédente : ' + F[prev].th + '</a>' : '<span></span>') + (next ? '<a href="' + link(next) + '" style="text-align:right">Suivante : ' + F[next].th + '</a>' : '') + '</div>';
@@ -301,6 +383,8 @@
       $$('table:not(.qr) td', art).forEach(function (td) { var first = !td.previousElementSibling; if (on && !first) td.classList.add('cellhide'); else td.classList.remove('cellhide'); });
     });
     art.addEventListener('click', function (e) { var td = e.target.closest('td.cellhide'); if (td) td.classList.remove('cellhide'); });
+    [$('#bscan'), $('#bthumb')].forEach(function (b) { if (b) b.addEventListener('click', function () { if (scanFid === fid && !$('#scans').hidden) closeScans(); else openScans(fid); }); });
+    if (f.scan && scanFid && !$('#scans').hidden) openScans(fid, true); else if (scanFid) closeScans(true);
     var bl = $('#blearn'); if (bl) bl.addEventListener('click', function () { learnFiche(fid); route(); });
     var br = $('#breread'); if (br) br.addEventListener('click', function () { var s = mem.fiches[fid]; s.rereads = (s.rereads || []).concat([today()]); logToday('reread'); save(); route(); });
     var nt = $('#notes'), timer = null;
@@ -599,7 +683,7 @@
     return '<optgroup label="Programmes">' + ps.map(function (p) { var v = 'p:' + p.id; return '<option value="' + v + '"' + (sel === v ? ' selected' : '') + '>' + esc(p.court || p.titre) + ' (tout)</option>' + p.jours.map(function (j, k) { var w = v + ':' + k; return '<option value="' + w + '"' + (sel === w ? ' selected' : '') + '>' + esc((p.court || p.titre) + ', ' + progDayName(p, k).toLowerCase()) + '</option>'; }).join(''); }).join('') + '</optgroup>';
   }
   function qcmCard(q, st, opts) { // opts: {feedback:bool, n, total}
-    var h = '<div class="card qcm"><div class="src"><a href="' + link(q.f) + '">' + F[q.f].th + '</a><span class="muted"> · niveau ' + (q.niveau || 1) + '</span></div>';
+    var h = '<div class="card qcm"><div class="src"><a href="' + link(q.f) + '">' + F[q.f].th + '</a><span class="muted">, niveau ' + (q.niveau || 1) + '</span></div>';
     h += '<div class="q">' + qt(q.q) + '</div><div class="muted small">' + (q.type === 'multiple' ? 'Plusieurs réponses possibles' : 'Une seule réponse') + '</div><ol class="opts">';
     q.choix.forEach(function (c, i) {
       var on = st.sel.indexOf(i) >= 0, cls = on ? ' on' : '';
@@ -1009,11 +1093,11 @@
     var p = fp.p, t = today(), i = progDayIdx(p, t), h = '<div class="prog panel">';
     if (fp.st === 0) {
       var j = p.jours[i], s = progStats(p, i);
-      h += '<div class="phead"><div><div class="eyebrow">' + esc(p.titre) + ' · jour ' + (i + 1) + ' sur ' + p.jours.length + '</div><h2>' + esc(progDayName(p, i)) + ' : ' + esc(j.titre) + '</h2></div>' +
+      h += '<div class="phead"><div><div class="eyebrow">' + esc(p.titre) + ', jour ' + (i + 1) + ' sur ' + p.jours.length + '</div><h2>' + esc(progDayName(p, i)) + ' : ' + esc(j.titre) + '</h2></div>' +
         '<a class="small" href="#/programme/' + p.id + '">Tout le programme</a></div>';
       if (j.conseil) h += '<p class="small muted">' + esc(j.conseil) + '</p>';
       h += itemsHtml(p, j.items);
-      h += '<div class="small muted pstat">' + s.done + ' / ' + s.items + ' fiches faites aujourd’hui' + (s.qdone ? ' · ' + s.qdone + ' / ' + s.qcm + ' QCM du jour faits, ' + Math.round(100 * s.qok / s.qdone) + ' % justes' : '') + '</div>';
+      h += '<div class="small muted pstat">' + s.done + ' / ' + s.items + ' fiches faites aujourd’hui' + (s.qdone ? ', ' + s.qdone + ' / ' + s.qcm + ' QCM du jour faits, ' + Math.round(100 * s.qok / s.qdone) + ' % justes' : '') + '</div>';
       h += dayActions(p, i, true);
     } else if (fp.st === 1) {
       var n = diff(t, p.debut);
@@ -1037,9 +1121,9 @@
     h += '<div class="row" style="margin:14px 0 4px"><a class="btn primary" href="#/qcm?s=p:' + p.id + '&n=20&go=1">20 QCM sur tout le programme</a><a class="btn" href="#/examen?s=p:' + p.id + '">Examen blanc du programme</a><a class="btn" href="#/chiffres?portee=p:' + p.id + '&mode=qcm">Chiffres</a><a class="btn" href="#/sujet/' + pickFrom(progSujets(p)) + '">Sujet rédactionnel</a></div>';
     h += '<div class="pgrid">' + p.jours.map(function (j, k) {
       var st = progStats(p, k);
-      return '<section class="panel' + (k === cur ? ' now' : '') + '"><div class="eyebrow">Jour ' + (k + 1) + (k === cur ? ' · aujourd’hui' : '') + '</div><h2>' + esc(progDayName(p, k)) + '</h2><p class="ptitle">' + esc(j.titre) + '</p>' +
+      return '<section class="panel' + (k === cur ? ' now' : '') + '"><div class="eyebrow">Jour ' + (k + 1) + (k === cur ? ', aujourd’hui' : '') + '</div><h2>' + esc(progDayName(p, k)) + '</h2><p class="ptitle">' + esc(j.titre) + '</p>' +
         (j.conseil ? '<p class="small muted">' + esc(j.conseil) + '</p>' : '') + itemsHtml(p, j.items) +
-        '<div class="small muted pstat">' + st.done + ' / ' + st.items + ' faites · environ ' + st.pages + ' pages · ' + st.qcm + ' QCM</div>' + dayActions(p, k, k === cur) + '</section>';
+        '<div class="small muted pstat">' + st.done + ' / ' + st.items + ' faites, environ ' + st.pages + ' pages, ' + st.qcm + ' QCM</div>' + dayActions(p, k, k === cur) + '</section>';
     }).join('') + '</div>';
     h += '<p class="small muted">Une fiche est cochée quand vous cliquez sur « J’ai appris cette fiche ». Pour les extraits (une partie d’un chapitre transversal), utilisez le bouton « Extrait fait » en haut de la fiche ouverte depuis ce programme.</p>';
     if ((mem.progs || []).some(function (x) { return x.id === p.id; })) h += '<button class="btn" id="pdel">Supprimer ce programme</button>';
@@ -1052,7 +1136,7 @@
   function progPlanningHtml() {
     var h = '<h2 class="sec">Programmes ciblés</h2><p class="small muted">Un thème sur quelques jours (un week-end, par exemple) : fiches réparties par jour, QCM, questions, chiffres et sujets limités à ce thème, examen blanc le dernier jour.</p>';
     var list = progs();
-    if (list.length) h += '<div class="list">' + list.map(function (p) { var s = progStats(p); return '<div class="it"><span></span><div><a class="ttl" href="#/programme/' + p.id + '">' + esc(p.titre) + '</a><div class="small muted">' + cap(wday(p.debut)) + ' ' + fdate(p.debut) + ' → ' + wday(progEnd(p)) + ' ' + fdate(progEnd(p)) + ' · ' + s.done + ' / ' + s.items + ' fiches faites · ' + s.qcm + ' QCM</div></div></div>'; }).join('') + '</div>';
+    if (list.length) h += '<div class="list">' + list.map(function (p) { var s = progStats(p); return '<div class="it"><span></span><div><a class="ttl" href="#/programme/' + p.id + '">' + esc(p.titre) + '</a><div class="small muted">' + cap(wday(p.debut)) + ' ' + fdate(p.debut) + ' → ' + wday(progEnd(p)) + ' ' + fdate(progEnd(p)) + ', ' + s.done + ' / ' + s.items + ' fiches faites, ' + s.qcm + ' QCM</div></div></div>'; }).join('') + '</div>';
     var hidden = (D.programmes || []).filter(function (p) { return (mem.hiddenProgs || {})[p.id]; });
     if (hidden.length) h += '<p class="small"><button class="linkbtn" id="punhide">Réafficher les programmes masqués (' + hidden.length + ')</button></p>';
     h += '<details class="panel pnew"><summary><b>Créer un programme</b></summary><div class="grid2" style="margin-top:12px">' +
@@ -1102,7 +1186,7 @@
     });
     var key = fid + '|' + (params.sec || ''), done = !!(mem.progDone || {})[key];
     var bar = document.createElement('div'); bar.className = 'progbar';
-    bar.innerHTML = '<span><b>' + esc(p.court || p.titre) + '</b> · ' + (params.sec ? 'partie « ' + esc(params.sec) + ' »' : 'extrait') + (hits.length ? ', ' + plural(hits.length, 'passage surligné', 'passages surlignés') : '') + '</span>' +
+    bar.innerHTML = '<span><b>' + esc(p.court || p.titre) + '</b> : ' + (params.sec ? 'partie « ' + esc(params.sec) + ' »' : 'extrait') + (hits.length ? ', ' + plural(hits.length, 'passage surligné', 'passages surlignés') : '') + '</span>' +
       (hits.length ? '<button class="btn" id="hlnext">Passage suivant</button>' : '') +
       '<button class="btn' + (done ? ' on' : ' primary') + '" id="hldone">' + (done ? 'Extrait fait ✓' : 'Extrait fait') + '</button><a class="btn" href="#/programme/' + p.id + '">Retour au programme</a>';
     art.parentNode.insertBefore(bar, art);
@@ -1127,6 +1211,7 @@
     if (r.name !== 'chiffres') drill = null;
     if (r.name !== 'qcm') quiz = null;
     if (r.name !== 'sujet') clearInterval(sujTimer);
+    if (r.name !== 'fiche' && scanFid) closeScans(true);
     switch (r.name) {
       case 'fiche': pageFiche(r.arg, r.params.ancre, r.params); break;
       case 'programme': pageProgramme(r.arg); break;
@@ -1159,6 +1244,7 @@
   sform.addEventListener('submit', function (e) { e.preventDefault(); location.hash = '#/recherche?q=' + encodeURIComponent(sinput.value); });
   $('#bmenu').addEventListener('click', function () { app.classList.toggle('menu'); });
   document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && scanFid) { closeScans(); return; }
     if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
     var r = parseRoute();
     if (r.name === 'revision' && session) {
