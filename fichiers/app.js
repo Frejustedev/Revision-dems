@@ -1,0 +1,1188 @@
+/* Révision DEMS — application locale (aucune connexion requise) */
+(function () {
+  'use strict';
+  var D = window.DEMS;
+  if (!D) { document.body.textContent = 'Le fichier de données est introuvable (fichiers/donnees.js).'; return; }
+
+  /* ------------------------------------------------------------------ données dérivées */
+  var F = D.fiches, ORDER = D.order;
+  var THEMES = {}, CATS = {};
+  D.cats.forEach(function (c) {
+    CATS[c.id] = c;
+    c.themes.forEach(function (t) { t.cat = c.id; THEMES[t.id] = t; t.all = []; t.groups.forEach(function (g) { t.all = t.all.concat(g.fiches); }); });
+  });
+  var CARD = {}; D.cards.forEach(function (c) { CARD[c.id] = c; });
+  var NORM = {}; // texte normalisé pour la recherche (calculé à la demande)
+  var TREE_ORDER = []; D.cats.forEach(function (c) { c.themes.forEach(function (t) { TREE_ORDER = TREE_ORDER.concat(t.all); }); });
+
+  /* ------------------------------------------------------------------ stockage */
+  var KEY = 'revision-dems-v1', mem = null, canStore = true, EXAM = '2026-12-06';
+  function blank() {
+    return { v: 1, exam: EXAM, examSet: false, start: today(), fiches: {}, cards: {}, clozes: {}, chks: {}, devs: {}, log: {}, qcm: {}, sujets: {}, exams: [], theme: 'auto' };
+  }
+  function load() {
+    var s = null;
+    try { s = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { canStore = false; }
+    mem = Object.assign(blank(), s || {});
+    if (!mem.examSet) mem.exam = EXAM; // date officielle tant qu'elle n'a pas été modifiée à la main
+    ['fiches', 'cards', 'clozes', 'chks', 'devs', 'log', 'qcm', 'sujets'].forEach(function (k) { mem[k] = mem[k] || {}; }); mem.exams = mem.exams || [];
+  }
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(mem)); } catch (e) { canStore = false; }
+  }
+
+  /* ------------------------------------------------------------------ dates */
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function iso(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function today() { return iso(new Date()); }
+  function parse(s) { var p = s.split('-'); return new Date(+p[0], +p[1] - 1, +p[2]); }
+  function addDays(s, n) { var d = parse(s); d.setDate(d.getDate() + n); return iso(d); }
+  function diff(a, b) { return Math.round((parse(b) - parse(a)) / 864e5); }
+  var MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+  function fdate(s) { var d = parse(s); return d.getDate() + ' ' + MOIS[d.getMonth()]; }
+  function phases() {
+    // phases proportionnelles au temps restant depuis le début des révisions : 55 % / 25 % / 20 %
+    var e = mem.exam, total = Math.max(21, diff(mem.start, e));
+    var p3 = addDays(e, -Math.max(7, Math.round(total * .2))), p2 = addDays(p3, -Math.max(7, Math.round(total * .25)));
+    return [
+      { n: 1, name: 'Premier passage', from: mem.start < p2 ? mem.start : today(), to: addDays(p2, -1), what: 'Apprendre toutes les fiches une première fois, gros thèmes d’abord.' },
+      { n: 2, name: 'Deuxième passage', from: p2, to: addDays(p3, -1), what: 'Repasser vite sur tout, insister sur les fiches ratées, rédiger des plans chronométrés.' },
+      { n: 3, name: 'Consolidation', from: p3, to: e, what: 'Encadrés « À retenir », questions et examens blancs. Rien de nouveau.' }
+    ];
+  }
+  function currentPhase() { var t = today(), ps = phases(); for (var i = 0; i < ps.length; i++) if (t <= ps[i].to) return ps[i]; return ps[2]; }
+
+  /* ------------------------------------------------------------------ outils */
+  function $(s, r) { return (r || document).querySelector(s); }
+  function $$(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+  var ISO = /\b(\d{2,3}m?)(Tc|In|Ga|Ge|Lu|Tl|Xe|Kr|Rb|Sr|Sm|Re|Ra|Ac|Bi|Er|Cr|Co|Cu|Zr|Mo|Te|Tb|At|Ho|Cs|Ba|Gd|Se|Fe|Na|Ca|Br|Zn|Ru|Rh|Pb|Sn|Yb|Dy|Y|I|F|C|N|O|P|K|U)(?![a-z])/g;
+  function qt(x) { return esc(x).replace(ISO, '<sup>$1</sup>$2'); }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function strip(s) { var d = document.createElement('div'); d.innerHTML = s; return d.textContent; }
+  function normalize(s) { return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+  function plural(n, a, b) { return n + ' ' + (n > 1 ? (b || a + 's') : a); }
+  function shuffle(a) { for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+  function link(fid) { return '#/fiche/' + fid; }
+  function fpages(fid) { return F[fid].np || 1; } // pages manuscrites couvertes par la fiche
+  function logToday(k, n) { var t = today(); mem.log[t] = mem.log[t] || {}; mem.log[t][k] = (mem.log[t][k] || 0) + (n || 1); }
+
+  /* ------------------------------------------------------------------ maîtrise (carte de fixation) */
+  var LUT = ['--lut0', '--lut1', '--lut2', '--lut3', '--lut4', '--lut5'];
+  var lutRGB = null;
+  function readLut() {
+    var cs = getComputedStyle(document.documentElement);
+    lutRGB = LUT.map(function (v) { var h = cs.getPropertyValue(v).trim(); return [parseInt(h.substr(1, 2), 16), parseInt(h.substr(3, 2), 16), parseInt(h.substr(5, 2), 16)]; });
+  }
+  function lut(x) {
+    if (!lutRGB) readLut();
+    x = Math.max(0, Math.min(1, x)) * (lutRGB.length - 1);
+    var i = Math.min(lutRGB.length - 2, Math.floor(x)), f = x - i, a = lutRGB[i], b = lutRGB[i + 1];
+    return 'rgb(' + [0, 1, 2].map(function (k) { return Math.round(a[k] + (b[k] - a[k]) * f); }).join(',') + ')';
+  }
+  function mastery(fid) {
+    var st = mem.fiches[fid]; if (!st || !st.learned) return -1;
+    var cs = F[fid].cards; if (!cs.length) return .5;
+    var s = 0;
+    cs.forEach(function (c) { var k = mem.cards[c]; s += k ? Math.min(1, (k.int || 0) / 30) : 0; });
+    return .08 + .92 * (s / cs.length);
+  }
+  function dotColor(fid) { var m = mastery(fid); return m < 0 ? '' : lut(m); }
+
+  /* ------------------------------------------------------------------ répétition espacée (SM-2 simplifié) */
+  function dueCards() {
+    var t = today(), out = [];
+    Object.keys(mem.cards).forEach(function (cid) { var k = mem.cards[cid]; if (CARD[cid] && k.due <= t) out.push(cid); });
+    out.sort(function (a, b) { return mem.cards[a].due < mem.cards[b].due ? -1 : 1; });
+    return out;
+  }
+  function schedule(cid, g, dry) {
+    var k = Object.assign({ int: 0, ease: 2.5, reps: 0, lapses: 0 }, mem.cards[cid] || {});
+    var iv;
+    if (g === 1) { k.lapses++; k.reps = 0; k.ease = Math.max(1.3, k.ease - .2); iv = 0; }
+    else if (g === 2) { k.ease = Math.max(1.3, k.ease - .15); iv = k.reps === 0 ? 1 : Math.max(1, Math.round(k.int * 1.2)); k.reps++; }
+    else if (g === 3) { iv = k.reps === 0 ? 1 : k.reps === 1 ? 4 : Math.round(k.int * k.ease); k.reps++; }
+    else { k.ease += .15; iv = k.reps === 0 ? 4 : Math.round(Math.max(k.int, 1) * k.ease * 1.3); k.reps++; }
+    iv = Math.min(iv, Math.max(1, diff(today(), mem.exam))); // inutile de reporter après l'examen
+    if (g !== 1 && iv < 1) iv = 1;
+    if (dry) return iv;
+    k.int = iv; k.due = addDays(today(), iv); k.last = today();
+    mem.cards[cid] = k;
+    return iv;
+  }
+  function ivLabel(n) { return n === 0 ? 'tout de suite' : n === 1 ? 'demain' : 'dans ' + n + ' j'; }
+  function learnFiche(fid) {
+    var t = today();
+    mem.fiches[fid] = Object.assign(mem.fiches[fid] || {}, { learned: t, rereads: [] });
+    F[fid].cards.forEach(function (cid) { if (!mem.cards[cid]) mem.cards[cid] = { int: 0, ease: 2.5, reps: 0, lapses: 0, due: addDays(t, 1) }; });
+    logToday('learned'); save();
+  }
+  function rereadsDue() { // relectures J+1, J+7, J+21
+    var t = today(), out = [];
+    Object.keys(mem.fiches).forEach(function (fid) {
+      var st = mem.fiches[fid]; if (!st.learned || !F[fid]) return;
+      var done = st.rereads || [];
+      [1, 7, 21].forEach(function (d, i) { if (done.length === i && addDays(st.learned, d) <= t) out.push({ f: fid, step: d }); });
+    });
+    return out;
+  }
+
+  /* ------------------------------------------------------------------ rendu général */
+  var app = $('#app'), main = $('#main');
+  function setTheme() {
+    if (mem.theme === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', mem.theme);
+    lutRGB = null;
+  }
+  function renderSide(route) {
+    var due = dueCards().length, chkOpen = D.chks.filter(function (c) { return !(mem.chks[c.id] || {}).done; }).length;
+    var errN = Object.keys(mem.qcm).filter(function (id) { return QCM[id] && mem.qcm[id].lastOk === false; }).length;
+    var nav = [
+      ['#/', 'Aujourd’hui', ''],
+    ].concat((function () { var fp = featuredProg(); if (!fp) return []; var i = progDayIdx(fp.p); return [['#/programme/' + fp.p.id, fp.p.court || fp.p.titre, fp.st === 0 ? 'jour ' + (i + 1) + '/' + fp.p.jours.length : fp.st === 1 ? 'bientôt' : 'fini']]; })(), [
+      ['#/revision', 'Réviser les questions', due ? due : ''],
+      ['#/qcm', 'QCM', D.qcm.length],
+      ['#/examen', 'Examen blanc', exam && !exam.done ? 'en cours' : ''],
+      ['#/sujets', 'Sujets rédactionnels', Object.keys(SUJ).length],
+      ['#/chiffres', 'Chiffres', ''],
+      ['#/erreurs', 'Carnet d’erreurs', errN || ''],
+      ['#/stats', 'Statistiques', ''],
+      ['#/a-verifier', 'À vérifier', chkOpen],
+      ['#/planning', 'Planning', ''],
+      ['#/pdf', 'Fiches en PDF', ''],
+      ['#/donnees', 'Réglages et sauvegarde', '']
+    ]);
+    $('#nav').innerHTML = nav.map(function (n) {
+      var on = (route.name === '' && n[0] === '#/') || (n[0] !== '#/' && (n[0].slice(2) === route.name || n[0].slice(2) === route.name + '/' + route.arg || (route.name === 'sujet' && n[0] === '#/sujets')));
+      return '<a href="' + n[0] + '"' + (on ? ' class="on" aria-current="page"' : '') + '><span>' + n[1] + '</span><span class="count">' + n[2] + '</span></a>';
+    }).join('');
+    var cur = route.name === 'fiche' ? route.arg : null;
+    var curTheme = cur && F[cur] ? F[cur].theme : (route.name === 'theme' ? route.arg : null);
+    $('#tree').innerHTML = D.cats.map(function (c) {
+      var openC = curTheme && THEMES[curTheme].cat === c.id;
+      return '<details class="cat"' + (openC ? ' open' : '') + '><summary>' + esc(c.name) + '</summary>' +
+        c.themes.map(function (t) {
+          var inner = t.groups.map(function (g) {
+            return (g.name ? '<div class="grp">' + esc(g.name) + '</div>' : '') + g.fiches.map(function (fid) {
+              var col = dotColor(fid);
+              return '<a class="f' + (fid === cur ? ' on' : '') + '" href="' + link(fid) + '"><span class="dot"' + (col ? ' style="background:' + col + '"' : '') + '></span><span>' + F[fid].th + '</span></a>';
+            }).join('');
+          }).join('');
+          if (c.themes.length === 1) return '<div class="th">' + inner + '</div>';
+          return '<details class="th"' + (t.id === curTheme ? ' open' : '') + '><summary>' + esc(t.short) + '</summary>' + inner + '</details>';
+        }).join('') + '</details>';
+    }).join('');
+    var d = diff(today(), mem.exam);
+    $('#examline').textContent = d >= 0 ? 'J−' + d : 'examen passé';
+    var on = $('#tree a.f.on'); if (on && on.scrollIntoViewIfNeeded) on.scrollIntoViewIfNeeded(); else if (on) on.scrollIntoView({ block: 'nearest' });
+  }
+
+  /* ------------------------------------------------------------------ page : aujourd'hui */
+  function nextToLearn() {
+    var ph = currentPhase(), remaining = ORDER.filter(function (f) { return !(mem.fiches[f] || {}).learned; });
+    var pagesLeft = remaining.reduce(function (s, f) { return s + fpages(f); }, 0);
+    var p1 = phases()[0];
+    var daysLeft = Math.max(1, diff(today(), p1.to) + 1);
+    var target = ph.n === 1 ? Math.max(4, Math.ceil(pagesLeft / daysLeft)) : Math.max(4, Math.ceil(pagesLeft / Math.max(1, diff(today(), phases()[2].from))));
+    var learnedToday = Object.keys(mem.fiches).filter(function (f) { return mem.fiches[f].learned === today(); });
+    var done = learnedToday.reduce(function (s, f) { return s + fpages(f); }, 0);
+    var pick = [], acc = done;
+    for (var i = 0; i < remaining.length && acc < target; i++) { pick.push(remaining[i]); acc += fpages(remaining[i]); }
+    return { pick: pick, target: target, done: done, remaining: remaining, pagesLeft: pagesLeft, learnedToday: learnedToday };
+  }
+  function pageToday() {
+    var d = diff(today(), mem.exam), ph = currentPhase(), due = dueCards(), rr = rereadsDue(), nl = nextToLearn();
+    var learned = Object.keys(mem.fiches).filter(function (f) { return mem.fiches[f].learned && F[f]; }).length;
+    var seen = Object.keys(mem.cards).filter(function (c) { return CARD[c] && mem.cards[c].reps > 0; }).length;
+    var solid = Object.keys(mem.cards).filter(function (c) { return CARD[c] && mem.cards[c].int >= 21; }).length;
+    var h = '<div class="page wide">';
+    h += '<div class="hero"><div class="days" aria-label="jours avant l’examen">' + (d >= 0 ? d : 0) + '</div><div class="what"><strong>' +
+      (d === 1 ? 'jour avant l’examen' : 'jours avant l’examen') + '</strong><span class="muted">Phase ' + ph.n + ' : ' + ph.name.toLowerCase() + ', jusqu’au ' + fdate(ph.to).replace(/\.$/, '') + '. ' + esc(ph.what) + '</span></div></div>';
+
+    h += progPanel();
+    h += '<div class="today">';
+    // apprendre
+    var fpa = featuredProg(), inProg = fpa && fpa.st === 0;
+    if (inProg) h += '<div><h3>Apprendre</h3><div class="muted small">Aujourd’hui, le programme « ' + esc(fpa.p.court || fpa.p.titre) + ' » remplace l’objectif habituel du plan.</div><ul>';
+    else h += '<div><h3>Apprendre</h3><div class="muted small">Objectif du jour : environ ' + nl.target + ' pages' + (nl.done ? ', ' + nl.done + ' déjà faites' : '') + '.</div><ul>';
+    if (inProg) h += '<li><a href="#/programme/' + fpa.p.id + '">Voir le programme complet</a></li>';
+    else if (nl.pick.length) nl.pick.forEach(function (f) { h += '<li><a href="' + link(f) + '">' + F[f].th + '</a><span class="muted small num nowrap">' + fpages(f) + ' p.</span></li>'; });
+    else h += '<li>' + (nl.remaining.length ? 'Objectif atteint pour aujourd’hui.' : 'Toutes les fiches ont été apprises.') + '</li>';
+    h += '</ul>' + (nl.pick.length && !inProg ? '<a class="btn primary" href="' + link(nl.pick[0]) + '">Ouvrir la prochaine fiche</a>' : '') + '</div>';
+    // réviser
+    h += '<div><h3>Réviser</h3><div class="big">' + due.length + '</div><div class="muted small">' + (due.length > 1 ? 'questions arrivées à échéance' : 'question arrivée à échéance') + '</div>';
+    h += '<p class="small muted">Les questions d’une fiche entrent en révision quand vous la marquez comme apprise.</p>';
+    h += due.length ? '<a class="btn primary" href="#/revision">Commencer la révision</a>' : '<span class="muted small">Rien à réviser pour l’instant.</span>';
+    h += '</div>';
+    // relire + chiffres
+    h += '<div><h3>Relire</h3>';
+    if (rr.length) {
+      h += '<ul>' + rr.slice(0, 6).map(function (r) { return '<li><a href="' + link(r.f) + '">' + F[r.f].th + '</a><span class="muted small">J+' + r.step + '</span></li>'; }).join('') + '</ul>';
+      if (rr.length > 6) h += '<div class="muted small">et ' + (rr.length - 6) + ' autres</div>';
+    } else h += '<ul><li class="muted">Aucune relecture prévue aujourd’hui.</li></ul>';
+    h += '<a class="btn" href="#/chiffres">10 minutes de chiffres</a></div>';
+    h += '</div>';
+
+    // s'entraîner
+    var lf = learnedFiches().length, sc = lf ? 'apprises' : 'tout';
+    h += '<h2 class="sec">S’entraîner</h2><div class="train">' +
+      '<a class="tile" href="#/qcm?s=' + sc + '&n=20&go=1"><b>20 QCM</b><span>' + (lf ? 'sur vos fiches apprises' : 'au hasard dans toutes les fiches') + '</span></a>' +
+      '<a class="tile" href="#/sujet/' + pickSujet(sc) + '"><b>Un sujet rédactionnel</b><span>plan en temps limité, puis plan attendu</span></a>' +
+      '<a class="tile" href="#/examen"><b>Examen blanc</b><span>QCM chronométrés, note sur 20</span></a>' +
+      '<a class="tile" href="#/chiffres?portee=' + (lf ? 'apprises' : 'tout') + '&mode=qcm"><b>Chiffres en QCM</b><span>énergies, activités, délais, seuils</span></a></div>';
+    // carte de fixation
+    h += '<h2 class="sec">Carte de fixation</h2><div class="map">';
+    D.cats.forEach(function (c) {
+      c.themes.forEach(function (t) {
+        h += '<div class="mrow"><div class="mname" title="' + esc(t.name) + '">' + esc(t.short) + '</div><div class="cells">';
+        t.all.forEach(function (fid) {
+          var col = dotColor(fid), isDue = F[fid].cards.some(function (cid) { var k = mem.cards[cid]; return k && k.due <= today(); });
+          h += '<a class="cell' + (isDue ? ' due' : '') + '" href="' + link(fid) + '" title="' + esc(F[fid].title) + '"' + (col ? ' style="background:' + col + '"' : '') + '></a>';
+        });
+        h += '</div></div>';
+      });
+    });
+    h += '<div class="legend"><span class="cold"></span>pas encore apprise<span class="ramp" aria-hidden="true"></span>apprise, puis maîtrisée</div></div>';
+    h += '<div class="stats"><span><b>' + learned + '</b> / ' + ORDER.length + ' fiches apprises</span><span><b>' + seen + '</b> / ' + D.cards.length + ' questions travaillées</span><span><b>' + solid + '</b> questions solides (intervalle ≥ 3 semaines)</span></div>';
+    h += '<details class="guide"><summary>Comment utiliser ce site</summary><ol>' +
+      '<li><b>Apprendre</b> : ouvrez la fiche proposée, lisez « À retenir », puis la fiche. Tranchez les mentions [à vérifier] au fur et à mesure.</li>' +
+      '<li><b>Réciter</b> : activez le mode plan, récitez chaque partie de tête, cliquez sur le titre pour vérifier.</li>' +
+      '<li><b>Valider</b> : cliquez sur « J’ai appris cette fiche ». Ses questions entrent dans la révision espacée et des relectures sont prévues à J+1, J+7 et J+21.</li>' +
+      '<li><b>Réviser chaque jour</b> : faites les questions arrivées à échéance et 10 minutes de chiffres. La carte de fixation chauffe à mesure que vous maîtrisez.</li>' +
+      '<li><b>Sauvegarder</b> : exportez votre progression de temps en temps (Réglages et sauvegarde).</li></ol></details>';
+    if (!canStore) h += '<p class="nb">Ce navigateur bloque l’enregistrement local : votre progression sera perdue à la fermeture. Ouvrez le site avec Chrome, Edge ou Firefox.</p>';
+    h += '</div>';
+    main.innerHTML = h;
+  }
+
+  /* ------------------------------------------------------------------ page : fiche */
+  function pageFiche(fid, anchor, params) {
+    var f = F[fid]; if (!f) { main.innerHTML = '<div class="page"><p class="empty">Fiche introuvable.</p></div>'; return; }
+    var t = THEMES[f.theme], c = CATS[f.cat], st = mem.fiches[fid] || {};
+    var idx = TREE_ORDER.indexOf(fid), prev = TREE_ORDER[idx - 1], next = TREE_ORDER[idx + 1];
+    var h = '<div class="page">';
+    h += '<div class="crumbs"><a href="#/theme/' + t.id + '">' + esc(c.name) + (c.themes.length > 1 ? ' / ' + esc(t.short) : '') + '</a>' + (f.group ? ' / ' + esc(f.group) : '') + '</div>';
+    h += '<div class="fiche-head"><h1 class="title">' + f.th + '</h1><div class="meta">' + (f.src === 'Synthèse transversale' ? 'Synthèse construite à partir de toutes vos fiches. Les mentions « réf. » sont des compléments absents de vos notes' : 'Notes manuscrites « ' + esc(f.src) + ' », pages ' + esc(f.pages.replace(/-/g, '–'))) + (f.sub ? '. ' + esc(f.sub) : '.') + '</div></div>';
+    h += '<div class="toolbar row">';
+    h += '<button class="btn" id="bplan" aria-pressed="false">Mode plan</button><span class="status planhint" id="planhint" hidden>Récitez chaque partie de tête, puis cliquez sur son titre pour vérifier.</span>';
+    h += st.learned ? '<span class="status">Apprise le ' + fdate(st.learned) + '</span>' : '<button class="btn primary" id="blearn">J’ai appris cette fiche</button>';
+    if (f.cards.length) h += '<a class="btn" href="#/revision?f=' + fid + '">Questions (' + f.cards.length + ')</a>';
+    if ((QBYF[fid] || []).length) h += '<a class="btn" href="#/qcm?s=f:' + fid + '&n=tout&go=1">QCM (' + QBYF[fid].length + ')</a>';
+    (SBYF[fid] || []).slice(0, 1).forEach(function (sid) { h += '<a class="btn" href="#/sujet/' + sid + '">Sujet rédactionnel</a>'; });
+    if (f.pdf) h += '<a class="btn" target="_blank" href="' + f.pdf + '">PDF</a>';
+    if (f.html.indexOf('<table') >= 0) h += '<button class="btn" id="btabs" aria-pressed="false">Tableaux à compléter</button>';
+    var rr = rereadsDue().filter(function (r) { return r.f === fid; })[0];
+    if (rr) h += '<button class="btn" id="breread">Relecture J+' + rr.step + ' faite</button>';
+    h += '</div>';
+    h += '<article class="fiche" id="art">' + f.html + '</article>';
+    h += '<div class="notes"><label for="notes"><b>Mes notes</b> <span class="muted small">(corrections après vérification, moyens mnémotechniques…)</span></label><textarea id="notes">' + esc(st.notes || '') + '</textarea></div>';
+    h += '<div class="pager">' + (prev ? '<a href="' + link(prev) + '">Précédente : ' + F[prev].th + '</a>' : '<span></span>') + (next ? '<a href="' + link(next) + '" style="text-align:right">Suivante : ' + F[next].th + '</a>' : '') + '</div>';
+    h += '</div>';
+    main.innerHTML = h;
+    var art = $('#art');
+    $$('table', art).forEach(function (tb) { var w = document.createElement('div'); w.className = 'tablewrap'; tb.parentNode.insertBefore(w, tb); w.appendChild(tb); });
+    $$('table.qr tr', art).forEach(function (tr) { var td = tr.children[1]; if (td) { td.classList.add('ans', 'hidden'); td.addEventListener('click', function () { td.classList.toggle('hidden'); }); } });
+    var hint = $('.autotest .hint', art); if (hint) hint.innerHTML = 'Cliquez sur une réponse pour l’afficher. <button class="linkbtn" id="ballans">Tout afficher</button>';
+    var ba = $('#ballans'); if (ba) ba.addEventListener('click', function () { $$('td.ans', art).forEach(function (td) { td.classList.remove('hidden'); }); });
+    // mode plan
+    $('#bplan').addEventListener('click', function () {
+      var on = art.classList.toggle('planmode'); this.setAttribute('aria-pressed', on); this.classList.toggle('on', on);
+      $$('.reveal', art).forEach(function (e) { e.classList.remove('reveal'); }); $$('.opened', art).forEach(function (e) { e.classList.remove('opened'); });
+      $('#planhint').hidden = !on;
+      if (on) window.scrollTo(0, art.offsetTop - 80);
+    });
+    art.addEventListener('click', function (e) {
+      var hd = e.target.closest('h2,h3,h4'); if (!hd || !art.classList.contains('planmode')) return;
+      var lvl = +hd.tagName[1], n = hd.nextElementSibling; hd.classList.add('opened');
+      while (n && !(/^H[2-4]$/.test(n.tagName) && +n.tagName[1] <= lvl)) { n.classList.add('reveal'); n = n.nextElementSibling; }
+    });
+    var bt = $('#btabs');
+    if (bt) bt.addEventListener('click', function () {
+      var on = art.classList.toggle('tabmode'); this.setAttribute('aria-pressed', on); this.classList.toggle('on', on);
+      $$('table:not(.qr) td', art).forEach(function (td) { var first = !td.previousElementSibling; if (on && !first) td.classList.add('cellhide'); else td.classList.remove('cellhide'); });
+    });
+    art.addEventListener('click', function (e) { var td = e.target.closest('td.cellhide'); if (td) td.classList.remove('cellhide'); });
+    var bl = $('#blearn'); if (bl) bl.addEventListener('click', function () { learnFiche(fid); route(); });
+    var br = $('#breread'); if (br) br.addEventListener('click', function () { var s = mem.fiches[fid]; s.rereads = (s.rereads || []).concat([today()]); logToday('reread'); save(); route(); });
+    var nt = $('#notes'), timer = null;
+    nt.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(function () { mem.fiches[fid] = Object.assign(mem.fiches[fid] || {}, { notes: nt.value }); save(); }, 400); });
+    var ptarget = params && (params.hl || params.sec) ? progFicheExtras(fid, params, art) : null;
+    if (anchor) { var a = document.getElementById(anchor); if (a) { a.scrollIntoView({ block: 'center' }); a.classList.add('flash'); } }
+    else if (ptarget) ptarget.scrollIntoView({ block: 'start' });
+    else window.scrollTo(0, 0);
+  }
+
+  /* ------------------------------------------------------------------ page : thème */
+  function pageTheme(tid) {
+    var t = THEMES[tid]; if (!t) return pageToday();
+    var h = '<div class="page"><div class="crumbs">' + esc(CATS[t.cat].name) + '</div><h1 class="title">' + esc(t.name) + '</h1><p class="lede">' + plural(t.all.length, 'fiche') + ', ' + plural(qcmPool('t:' + tid).length, 'QCM') + '</p>';
+    h += '<div class="row">' + (qcmPool('t:' + tid).length ? '<a class="btn primary" href="#/qcm?s=t:' + tid + '&n=20&go=1">20 QCM sur ce thème</a>' : '') + '<a class="btn" href="#/chiffres?portee=' + tid + '">Chiffres du thème</a>' + (D.pdf && D.pdf.themes && D.pdf.themes[tid] ? '<a class="btn" target="_blank" href="' + D.pdf.themes[tid] + '">PDF du thème</a>' : '') + '</div>';
+    t.groups.forEach(function (g) {
+      if (g.name) h += '<h2 class="sec">' + esc(g.name) + '</h2>';
+      h += '<div class="list">' + g.fiches.map(function (fid) {
+        var st = mem.fiches[fid] || {}, col = dotColor(fid);
+        return '<div class="it"><span class="dot"' + (col ? ' style="background:' + col + '"' : '') + '></span><div><a class="ttl" href="' + link(fid) + '">' + F[fid].th + '</a><div class="small muted">' + (st.learned ? 'Apprise le ' + fdate(st.learned) : 'Pas encore apprise') + ', ' + plural(F[fid].cards.length, 'question') + ', environ ' + fpages(fid) + ' p.</div></div></div>';
+      }).join('') + '</div>';
+    });
+    main.innerHTML = h + '</div>'; window.scrollTo(0, 0);
+  }
+
+  /* ------------------------------------------------------------------ page : révision */
+  var session = null;
+  function pageRevision(params) {
+    var fid = params.f;
+    if (params.p) { var pa = parseP('p:' + params.p); if (pa.p && (!session || session.key !== 'p:' + params.p)) session = { key: 'p:' + params.p, list: shuffle(progCards(pa.p, pa.d)), i: 0, shown: false, done: 0, again: [] }; if (pa.p) return renderCard(); }
+    if (!session || session.key !== (fid || 'due')) {
+      var list = fid ? F[fid].cards.slice() : dueCards();
+      session = { key: fid || 'due', list: fid ? shuffle(list) : list, i: 0, shown: false, done: 0, again: [] };
+    }
+    renderCard();
+  }
+  function renderCard() {
+    var s = session, h = '<div class="page">';
+    var title = s.key === 'due' ? 'Réviser les questions' : 'M’interroger : ' + (s.key.indexOf('p:') === 0 ? esc(scopeLabel(s.key)) : F[s.key].th);
+    h += '<h1 class="title">' + title + '</h1>';
+    if (s.i >= s.list.length) {
+      var nextDue = Object.keys(mem.cards).map(function (c) { return mem.cards[c].due; }).filter(function (d) { return d > today(); }).sort()[0];
+      h += '<div class="card"><div class="q">' + (s.done ? 'Session terminée : ' + plural(s.done, 'question revue', 'questions revues') + '.' : (s.key === 'due' ? 'Aucune question à réviser aujourd’hui.' : 'Cette fiche n’a pas de questions.')) + '</div>';
+      h += '<p class="muted">' + (nextDue ? 'Prochaines questions le ' + fdate(nextDue) + '.' : 'Marquez des fiches comme apprises pour alimenter la révision.') + '</p>';
+      h += '<div class="actions row"><a class="btn primary" href="#/">Retour à aujourd’hui</a>' + (s.key.indexOf('p:') === 0 ? '<a class="btn" href="#/programme/' + s.key.slice(2).split(':')[0] + '">Revenir au programme</a>' : s.key !== 'due' ? '<a class="btn" href="' + link(s.key) + '">Revenir à la fiche</a>' : '') + '</div></div></div>';
+      main.innerHTML = h; session = null; renderSide(parseRoute()); return;
+    }
+    var cid = s.list[s.i], c = CARD[cid], f = F[c.f];
+    h += '<div class="muted small">' + (s.i + 1) + ' sur ' + s.list.length + '</div><div class="progress"><span style="width:' + Math.round(100 * s.i / s.list.length) + '%"></span></div>';
+    h += '<div class="card"><div class="src"><a href="' + link(c.f) + '">' + f.th + '</a></div><div class="q">' + c.q + '</div>';
+    if (s.shown) {
+      h += '<div class="a">' + c.a + '</div><div class="actions"><div class="muted small" style="margin-bottom:8px">Comment ça s’est passé ?</div><div class="row grade">' +
+        [[1, 'Raté'], [2, 'Difficile'], [3, 'Bien'], [4, 'Facile']].map(function (g) {
+          return '<button class="btn g' + g[0] + '" data-g="' + g[0] + '">' + g[1] + ' <small>' + ivLabel(schedule(cid, g[0], true)) + ', touche ' + g[0] + '</small></button>';
+        }).join('') + '</div></div>';
+    } else h += '<div class="actions"><button class="btn primary" id="bshow">Afficher la réponse <kbd>Espace</kbd></button></div>';
+    h += '</div></div>';
+    main.innerHTML = h;
+    var bs = $('#bshow'); if (bs) { bs.addEventListener('click', show); bs.focus(); }
+    $$('[data-g]').forEach(function (b) { b.addEventListener('click', function () { grade(+b.dataset.g); }); });
+  }
+  function show() { if (session && !session.shown) { session.shown = true; renderCard(); } }
+  function grade(g) {
+    var s = session; if (!s || !s.shown) return;
+    var cid = s.list[s.i]; schedule(cid, g);
+    if (g === 1) s.list.push(cid); // revient en fin de session
+    s.i++; s.done++; s.shown = false; logToday('cards'); save(); renderCard();
+  }
+
+  /* ------------------------------------------------------------------ page : chiffres */
+  var drill = null;
+  function pageChiffres(params) {
+    var scope = params.portee || (Object.keys(mem.fiches).some(function (f) { return mem.fiches[f].learned; }) ? 'apprises' : 'tout'), mode = params.mode === 'qcm' ? 'qcm' : 'libre';
+    var learnedSet = {}; Object.keys(mem.fiches).forEach(function (f) { if (mem.fiches[f].learned) learnedSet[f] = 1; });
+    var pp = scope.indexOf('p:') === 0 ? parseP(scope) : null;
+    var pool = pp ? (pp.p ? progClozes(pp.p, pp.d) : []) : D.clozes.filter(function (z) {
+      if (scope === 'erreurs') { var k = mem.clozes[z.id]; return k && k.miss > (k.ok || 0); }
+      return scope === 'tout' || (scope === 'apprises' ? learnedSet[z.f] : F[z.f].theme === scope);
+    });
+    if (!drill || drill.scope !== scope || drill.mode !== mode) {
+      var missed = pool.filter(function (z) { var k = mem.clozes[z.id]; return k && k.miss > (k.ok || 0); });
+      var unseen = shuffle(pool.filter(function (z) { return !mem.clozes[z.id]; }));
+      var rest = shuffle(pool.filter(function (z) { var k = mem.clozes[z.id]; return k && k.miss <= (k.ok || 0); }));
+      var list = (scope === 'erreurs' ? shuffle(missed) : shuffle(missed).slice(0, 8).concat(unseen, rest));
+      if (mode === 'qcm') list = list.filter(function (z) { return (z._ch = numChoices(z)); });
+      drill = { scope: scope, mode: mode, list: list.slice(0, 20), i: 0, shown: false, ok: 0, pick: null };
+    }
+    var q = function (o) { return '#/chiffres?portee=' + (o.portee || scope) + '&mode=' + (o.mode || mode); };
+    var h = '<div class="page"><h1 class="title">S’entraîner sur les chiffres</h1><p class="lede">Phrases tirées de vos fiches, la valeur surlignée est masquée. ' + (mode === 'qcm' ? 'Choisissez la bonne valeur parmi quatre.' : 'Retrouvez‑la de tête, puis vérifiez.') + '</p>';
+    h += '<div class="tabs"><a class="btn' + (mode === 'libre' ? ' on' : '') + '" href="' + q({ mode: 'libre' }) + '">Réponse libre</a><a class="btn' + (mode === 'qcm' ? ' on' : '') + '" href="' + q({ mode: 'qcm' }) + '">QCM</a><span class="sep"></span>' +
+      '<a class="btn' + (scope === 'apprises' ? ' on' : '') + '" href="' + q({ portee: 'apprises' }) + '">Fiches apprises</a><a class="btn' + (scope === 'tout' ? ' on' : '') + '" href="' + q({ portee: 'tout' }) + '">Toutes</a><a class="btn' + (scope === 'erreurs' ? ' on' : '') + '" href="' + q({ portee: 'erreurs' }) + '">Mes erreurs</a>' +
+      '<select class="btn" id="sth" aria-label="Choisir un thème"><option value="">Un thème…</option>' + Object.keys(THEMES).map(function (k) { return '<option value="' + k + '"' + (scope === k ? ' selected' : '') + '>' + esc(THEMES[k].short) + '</option>'; }).join('') + '</select></div>';
+    if (!drill.list.length) { h += '<div class="empty">' + (scope === 'apprises' ? 'Aucune fiche apprise pour l’instant. Choisissez « Toutes » ou un thème.' : scope === 'erreurs' ? 'Aucun chiffre raté pour l’instant.' : 'Rien à proposer ici.') + '</div></div>'; main.innerHTML = h; bindTh(mode); return; }
+    var d = drill;
+    if (d.i >= d.list.length) {
+      h += '<div class="card"><div class="q">Série terminée : ' + d.ok + ' sur ' + d.list.length + ' trouvés.</div><div class="actions row"><button class="btn primary" id="bagain">Nouvelle série</button><a class="btn" href="#/">Retour à aujourd’hui</a></div></div></div>';
+      main.innerHTML = h; bindTh(mode); $('#bagain').addEventListener('click', function () { drill = null; pageChiffres(params); }); return;
+    }
+    var z = d.list[d.i];
+    h += '<div class="muted small">' + (d.i + 1) + ' sur ' + d.list.length + '</div><div class="progress"><span style="width:' + Math.round(100 * d.i / d.list.length) + '%"></span></div>';
+    h += '<div class="card cloze"><div class="src"><a href="' + link(z.f) + '">' + F[z.f].th + '</a>' + (z.h ? ', ' + esc(z.h) : '') + '</div><div class="text">' + esc(z.b) + ' <span class="blank">' + (d.shown ? esc(z.v) : '?') + '</span> ' + esc(z.a) + '</div>';
+    if (mode === 'qcm') {
+      h += '<ol class="opts">' + z._ch.map(function (v, i) { var cls = ''; if (d.shown) cls = v === z.v ? ' ok' : (d.pick === i ? ' ko' : ''); return '<li><button class="opt' + cls + '" data-c="' + i + '"' + (d.shown ? ' disabled' : '') + '><span class="let">' + LET[i] + '</span><span>' + esc(v) + '</span></button></li>'; }).join('') + '</ol>';
+      if (d.shown) h += '<div class="actions"><button class="btn primary" id="bnextz">Suivante <kbd>Entrée</kbd></button></div>';
+    } else h += d.shown ? '<div class="actions row"><button class="btn" data-z="0">À revoir <kbd>1</kbd></button><button class="btn primary" data-z="1">Je savais <kbd>2</kbd></button></div>'
+      : '<div class="actions"><button class="btn primary" id="bshowz">Afficher la valeur <kbd>Espace</kbd></button></div>';
+    h += '</div></div>';
+    main.innerHTML = h; bindTh(mode);
+    var b = $('#bshowz'); if (b) { b.focus(); b.addEventListener('click', function () { d.shown = true; pageChiffres(params); }); }
+    $$('[data-z]').forEach(function (x) { x.addEventListener('click', function () { zgrade(+x.dataset.z, params); }); });
+    $$('[data-c]').forEach(function (x) { x.addEventListener('click', function () { zpick(+x.dataset.c, params); }); });
+    var nz = $('#bnextz'); if (nz) { nz.focus(); nz.addEventListener('click', function () { d.i++; d.shown = false; d.pick = null; pageChiffres(params); }); }
+  }
+  function zpick(i, params) {
+    var d = drill, z = d.list[d.i]; if (d.shown) return;
+    var ok = z._ch[i] === z.v, k = mem.clozes[z.id] || { ok: 0, miss: 0 };
+    if (ok) { k.ok++; d.ok++; } else k.miss++;
+    mem.clozes[z.id] = k; d.pick = i; d.shown = true; logToday('clozes'); save(); pageChiffres(params);
+  }
+  function zgrade(ok, params) {
+    var d = drill, z = d.list[d.i], k = mem.clozes[z.id] || { ok: 0, miss: 0 };
+    if (ok) { k.ok++; d.ok++; } else k.miss++;
+    mem.clozes[z.id] = k; d.i++; d.shown = false; logToday('clozes'); save(); pageChiffres(params);
+  }
+  function bindTh(mode) { var s = $('#sth'); if (s) s.addEventListener('change', function () { if (s.value) location.hash = '#/chiffres?portee=' + s.value + '&mode=' + (mode || 'libre'); }); }
+
+  /* ------------------------------------------------------------------ page : recherche */
+  function pageSearch(q) {
+    var h = '<div class="page"><h1 class="title">Recherche</h1>';
+    q = (q || '').trim();
+    if (q.length < 2) { main.innerHTML = h + '<p class="lede">Tapez au moins deux caractères dans le champ de recherche.</p></div>'; return; }
+    var terms = normalize(q).split(/\s+/).filter(Boolean), res = [];
+    Object.keys(F).forEach(function (fid) {
+      var n = NORM[fid] || (NORM[fid] = normalize(F[fid].title + ' ' + F[fid].text)), score = 0;
+      for (var i = 0; i < terms.length; i++) { var c = n.split(terms[i]).length - 1; if (!c) return; score += c; }
+      if (normalize(F[fid].title).indexOf(terms[0]) >= 0) score += 50;
+      res.push({ f: fid, s: score });
+    });
+    res.sort(function (a, b) { return b.s - a.s; });
+    h += '<p class="lede">' + plural(res.length, 'fiche trouvée', 'fiches trouvées') + ' pour « ' + esc(q) + ' ».</p><div class="list">';
+    res.slice(0, 60).forEach(function (r) {
+      var txt = F[r.f].text, n = NORM[r.f].slice(F[r.f].title.length + 1), p = n.indexOf(terms[0]);
+      var a = Math.max(0, p - 90), snip = (a ? '…' : '') + esc(txt.slice(a, p + 160)) + '…';
+      terms.forEach(function (t) { snip = snip.replace(new RegExp('(' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'), '<mark>$1</mark>'); });
+      h += '<div class="it"><span class="dot" style="' + (dotColor(r.f) ? 'background:' + dotColor(r.f) : '') + '"></span><div><a class="ttl" href="' + link(r.f) + '">' + F[r.f].th + '</a><div class="ctx">' + snip + '</div></div></div>';
+    });
+    main.innerHTML = h + '</div></div>';
+  }
+
+  /* ------------------------------------------------------------------ page : à vérifier */
+  function pageVerif(params) {
+    var tab = params.onglet === 'deduites' ? 'devs' : 'chks', items = D[tab], hide = params.masquer === '1';
+    var open = items.filter(function (x) { return !(mem[tab][x.id] || {}).done; }).length;
+    var h = '<div class="page"><h1 class="title">À vérifier</h1>';
+    h += '<p class="lede">' + (tab === 'chks' ? 'Endroits où vos notes s’écartent des valeurs usuelles. Tranchez avec un ouvrage de référence, puis cochez.' : 'Passages peu lisibles dont la lecture a été déduite du contexte (soulignés en pointillés dans les fiches). Comparez avec vos résumés originaux.') + '</p>';
+    h += '<div class="tabs"><a class="btn' + (tab === 'chks' ? ' on' : '') + '" href="#/a-verifier">Valeurs à vérifier (' + D.chks.length + ')</a><a class="btn' + (tab === 'devs' ? ' on' : '') + '" href="#/a-verifier?onglet=deduites">Lectures déduites (' + D.devs.length + ')</a>' +
+      '<a class="btn' + (hide ? ' on' : '') + '" href="#/a-verifier?' + (tab === 'devs' ? 'onglet=deduites&' : '') + 'masquer=' + (hide ? '0' : '1') + '">' + (hide ? 'Afficher les éléments traités' : 'Masquer les éléments traités') + '</a></div>';
+    h += '<p class="small muted">' + open + ' restant' + (open > 1 ? 's' : '') + ' sur ' + items.length + '.</p>';
+    if (!items.length) h += '<div class="empty">Rien dans cette liste.</div>';
+    var lastTheme = null;
+    h += '<div class="list">';
+    items.forEach(function (x) {
+      var st = mem[tab][x.id] || {}; if (hide && st.done) return;
+      var f = F[x.f];
+      if (f.theme !== lastTheme) { lastTheme = f.theme; h += '<div class="it" style="background:var(--sunk)"><span></span><b>' + esc(THEMES[f.theme].name) + '</b></div>'; }
+      h += '<div class="it' + (st.done ? ' done' : '') + '"><input type="checkbox" data-id="' + x.id + '"' + (st.done ? ' checked' : '') + ' aria-label="Marquer comme vérifié"><div><a class="ttl" href="#/fiche/' + x.f + '?ancre=' + x.id + '">' + f.th + '</a>' +
+        '<div class="ctx">' + (tab === 'chks' ? esc(x.ctx.replace(x.txt, '')) + ' <span class="chk">' + esc(x.txt) + '</span>' : esc(x.ctx).replace(esc(x.txt), '<span class="dev">' + esc(x.txt) + '</span>')) + '</div>' +
+        '<input type="text" data-note="' + x.id + '" placeholder="Ma conclusion (valeur retenue, source…)" value="' + esc(st.note || '') + '"></div></div>';
+    });
+    main.innerHTML = h + '</div></div>';
+    $$('input[type=checkbox][data-id]').forEach(function (cb) { cb.addEventListener('change', function () { var k = mem[tab][cb.dataset.id] = mem[tab][cb.dataset.id] || {}; k.done = cb.checked; save(); cb.closest('.it').classList.toggle('done', cb.checked); renderSide(parseRoute()); }); });
+    $$('input[data-note]').forEach(function (it) { it.addEventListener('change', function () { var k = mem[tab][it.dataset.note] = mem[tab][it.dataset.note] || {}; k.note = it.value; save(); }); });
+  }
+
+  /* ------------------------------------------------------------------ page : planning */
+  function pagePlanning() {
+    var ps = phases(), cur = currentPhase(), nl = nextToLearn();
+    var h = '<div class="page wide"><h1 class="title">Planning</h1><p class="lede">Calculé à partir de la date d’examen. Modifiez‑la si besoin, tout se recalcule.</p>';
+    h += '<div class="field"><label for="exam"><b>Date de l’examen</b></label><input type="date" id="exam" value="' + mem.exam + '"></div>';
+    h += '<div class="phases">' + ps.map(function (p) { return '<div' + (p.n === cur.n ? ' class="now"' : '') + '><h3>Phase ' + p.n + ' : ' + p.name + '</h3><div class="small muted">du ' + fdate(p.from) + ' au ' + fdate(p.to) + '</div><p class="small">' + esc(p.what) + '</p></div>'; }).join('') + '</div>';
+    h += '<p>Reste à apprendre : <b class="num">' + nl.remaining.length + '</b> fiches, environ <b class="num">' + nl.pagesLeft + '</b> pages. Rythme conseillé : <b class="num">' + nl.target + '</b> pages par jour.</p>';
+    h += progPlanningHtml();
+    h += '<h2 class="sec">Ordre d’étude conseillé</h2><p class="small muted">Gros thèmes cliniques d’abord ; les fiches « Compléments » sont rattachées à leur thème.</p>';
+    var seen = {}, rows = [];
+    ORDER.forEach(function (fid) { var t = F[fid].theme === 'add' ? null : F[fid].theme; if (t && !seen[t]) { seen[t] = 1; rows.push(t); } });
+    h += '<table class="plain"><thead><tr><th>Thème</th><th class="n">Fiches</th><th class="n">Pages</th><th>Progression</th></tr></thead><tbody>';
+    rows.forEach(function (tid) {
+      var t = THEMES[tid], fs = t.all, l = fs.filter(function (f) { return (mem.fiches[f] || {}).learned; }).length, pg = fs.reduce(function (s, f) { return s + fpages(f); }, 0);
+      h += '<tr><td><a href="#/theme/' + tid + '">' + esc(t.name) + '</a></td><td class="n">' + l + ' / ' + fs.length + '</td><td class="n">' + pg + '</td><td><div class="bar"><span style="width:' + Math.round(100 * l / fs.length) + '%"></span></div></td></tr>';
+    });
+    var ad = THEMES.add; var la = ad.all.filter(function (f) { return (mem.fiches[f] || {}).learned; }).length;
+    h += '<tr><td><a href="#/theme/add">' + esc(ad.name) + '</a> <span class="small muted">(réparties dans les thèmes)</span></td><td class="n">' + la + ' / ' + ad.all.length + '</td><td class="n">' + ad.all.reduce(function (s, f) { return s + fpages(f); }, 0) + '</td><td><div class="bar"><span style="width:' + Math.round(100 * la / ad.all.length) + '%"></span></div></td></tr>';
+    h += '</tbody></table>';
+    // activité récente
+    var days = Object.keys(mem.log).sort().slice(-14);
+    if (days.length) {
+      h += '<h2 class="sec">Activité des derniers jours</h2><table class="plain"><thead><tr><th>Jour</th><th class="n">Fiches apprises</th><th class="n">Questions</th><th class="n">Chiffres</th><th class="n">Relectures</th></tr></thead><tbody>';
+      days.reverse().forEach(function (d) { var l = mem.log[d]; h += '<tr><td>' + fdate(d) + '</td><td class="n">' + (l.learned || 0) + '</td><td class="n">' + (l.cards || 0) + '</td><td class="n">' + (l.clozes || 0) + '</td><td class="n">' + (l.reread || 0) + '</td></tr>'; });
+      h += '</tbody></table>';
+    }
+    main.innerHTML = h + '</div>';
+    $('#exam').addEventListener('change', function () { if (this.value) { mem.exam = this.value; mem.examSet = true; save(); route(); } });
+    bindProgPlanning();
+  }
+
+  /* ------------------------------------------------------------------ page : réglages et sauvegarde */
+  function pageData() {
+    var h = '<div class="page"><h1 class="title">Réglages et sauvegarde</h1>';
+    h += '<p class="lede">Votre progression est enregistrée dans ce navigateur, sur cet ordinateur. Exportez‑la régulièrement : un nettoyage du navigateur l’effacerait.</p>';
+    h += '<h2 class="sec">Sauvegarde</h2><div class="row"><button class="btn primary" id="bexp">Exporter ma progression</button><label class="btn" for="fimp">Importer une sauvegarde</label><input type="file" id="fimp" accept=".json,application/json" hidden></div><p class="small muted" id="msg"></p>';
+    h += '<h2 class="sec">Affichage</h2><div class="row">' + [['auto', 'Automatique'], ['light', 'Clair'], ['dark', 'Sombre']].map(function (o) { return '<button class="btn' + (mem.theme === o[0] ? ' on' : '') + '" data-th="' + o[0] + '">' + o[1] + '</button>'; }).join('') + '</div>';
+    h += '<h2 class="sec">Repartir de zéro</h2><p class="small muted">Efface toute la progression de ce navigateur (fiches apprises, révisions, notes).</p><button class="btn" id="breset">Tout effacer</button>';
+    h += '<h2 class="sec">À propos des fiches</h2><p class="small">' + ORDER.length + ' fiches, ' + D.cards.length + ' questions, ' + D.clozes.length + ' phrases à trous sur les chiffres, ' + D.chks.length + ' valeurs à vérifier, ' + D.devs.length + ' lectures déduites. Contenu retranscrit de vos résumés manuscrits.</p>';
+    main.innerHTML = h + '</div>';
+    $('#bexp').addEventListener('click', function () {
+      var blob = new Blob([JSON.stringify(mem, null, 1)], { type: 'application/json' }), a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = 'progression-revision-dems-' + today() + '.json'; document.body.appendChild(a); a.click(); a.remove();
+      $('#msg').textContent = 'Fichier de sauvegarde téléchargé.';
+    });
+    $('#fimp').addEventListener('change', function () {
+      var file = this.files[0]; if (!file) return; var r = new FileReader();
+      r.onload = function () { try { var o = JSON.parse(r.result); if (!o || o.v !== 1) throw 0; mem = Object.assign(blank(), o); save(); setTheme(); $('#msg').textContent = 'Sauvegarde importée.'; route(); } catch (e) { $('#msg').textContent = 'Ce fichier n’est pas une sauvegarde valide de Révision DEMS.'; } };
+      r.readAsText(file);
+    });
+    $$('[data-th]').forEach(function (b) { b.addEventListener('click', function () { mem.theme = b.dataset.th; save(); setTheme(); route(); }); });
+    var armed = false;
+    $('#breset').addEventListener('click', function () {
+      if (!armed) { armed = true; this.textContent = 'Confirmer : tout effacer'; this.classList.add('primary'); return; }
+      var exam = mem.exam; mem = blank(); mem.exam = exam; save(); route();
+    });
+  }
+
+  /* ================================================================== OUTILS D'ENTRAÎNEMENT */
+  var QCM = {}, QBYF = {}, SUJ = {}, SBYF = {};
+  (D.qcm || []).forEach(function (q) { QCM[q.id] = q; (QBYF[q.f] = QBYF[q.f] || []).push(q.id); });
+  (D.sujets || []).forEach(function (s) { SUJ[s.id] = s; (SBYF[s.f] = SBYF[s.f] || []).push(s.id); });
+  var LET = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+  function learnedFiches() { return ORDER.filter(function (f) { return (mem.fiches[f] || {}).learned; }); }
+  function scopeLabel(s) {
+    if (!s || s === 'apprises') return 'fiches apprises';
+    if (s === 'tout') return 'toutes les fiches';
+    if (s === 'erreurs') return 'mes erreurs';
+    if (s.indexOf('t:') === 0) return THEMES[s.slice(2)] ? THEMES[s.slice(2)].name : s;
+    if (s.indexOf('c:') === 0) return CATS[s.slice(2)] ? CATS[s.slice(2)].name : s;
+    if (s.indexOf('f:') === 0) return F[s.slice(2)] ? F[s.slice(2)].title : s;
+    if (s.indexOf('p:') === 0) { var pp = parseP(s); return pp.p ? (pp.p.court || pp.p.titre) + (pp.d !== null ? ', ' + progDayName(pp.p, pp.d).toLowerCase() : '') : s; }
+    return s;
+  }
+  function scopeFiches(s) {
+    if (!s || s === 'apprises') return learnedFiches();
+    if (s === 'tout' || s === 'erreurs') return ORDER.slice();
+    if (s.indexOf('t:') === 0) return (THEMES[s.slice(2)] || { all: [] }).all;
+    if (s.indexOf('c:') === 0) { var c = CATS[s.slice(2)]; return c ? [].concat.apply([], c.themes.map(function (t) { return t.all; })) : []; }
+    if (s.indexOf('f:') === 0) return [s.slice(2)];
+    if (s.indexOf('p:') === 0) { var pp = parseP(s); return pp.p ? progFiches(pp.p, pp.d) : []; }
+    return [];
+  }
+  function qcmPool(s, niveau) {
+    var out = [];
+    if (s === 'erreurs') out = Object.keys(mem.qcm).filter(function (id) { return QCM[id] && mem.qcm[id].lastOk === false; });
+    else if (s && s.indexOf('p:') === 0) { var pp = parseP(s); out = pp.p ? progQcm(pp.p, pp.d) : []; }
+    else scopeFiches(s).forEach(function (f) { out = out.concat(QBYF[f] || []); });
+    if (niveau && niveau !== 'tous') out = out.filter(function (id) { return String(QCM[id].niveau) === String(niveau); });
+    return out;
+  }
+  function scoreQ(q, sel) {
+    var a = sel.slice().sort(), b = q.bonnes.slice().sort();
+    if (a.length === b.length && a.every(function (x, i) { return x === b[i]; })) return 1;
+    if (q.type !== 'multiple') return 0;
+    var disc = 0; for (var i = 0; i < q.choix.length; i++) if ((sel.indexOf(i) >= 0) !== (q.bonnes.indexOf(i) >= 0)) disc++;
+    return disc === 1 ? .5 : 0;
+  }
+  function recordQ(id, sc) {
+    var k = mem.qcm[id] || { n: 0, ok: 0 };
+    k.n++; if (sc === 1) k.ok++; k.last = today(); k.lastOk = sc === 1; mem.qcm[id] = k; logToday('qcm');
+  }
+  function themeOptions(sel, withCats) {
+    var h = '';
+    D.cats.forEach(function (c) {
+      h += '<optgroup label="' + esc(c.name) + '">';
+      if (withCats && c.themes.length > 1) h += '<option value="c:' + c.id + '"' + (sel === 'c:' + c.id ? ' selected' : '') + '>Toute la catégorie</option>';
+      c.themes.forEach(function (t) { h += '<option value="t:' + t.id + '"' + (sel === 't:' + t.id ? ' selected' : '') + '>' + esc(t.short) + '</option>'; });
+      h += '</optgroup>';
+    });
+    return h;
+  }
+  function scopeSelect(id, sel) {
+    return '<select class="field-in" id="' + id + '">' +
+      '<option value="apprises"' + (sel === 'apprises' ? ' selected' : '') + '>Fiches apprises</option>' +
+      '<option value="tout"' + (sel === 'tout' ? ' selected' : '') + '>Toutes les fiches</option>' +
+      '<option value="erreurs"' + (sel === 'erreurs' ? ' selected' : '') + '>Mes erreurs</option>' + progOptions(sel) + themeOptions(sel, true) + '</select>';
+  }
+  function progOptions(sel) {
+    var ps = progs(); if (!ps.length) return '';
+    return '<optgroup label="Programmes">' + ps.map(function (p) { var v = 'p:' + p.id; return '<option value="' + v + '"' + (sel === v ? ' selected' : '') + '>' + esc(p.court || p.titre) + ' (tout)</option>' + p.jours.map(function (j, k) { var w = v + ':' + k; return '<option value="' + w + '"' + (sel === w ? ' selected' : '') + '>' + esc((p.court || p.titre) + ', ' + progDayName(p, k).toLowerCase()) + '</option>'; }).join(''); }).join('') + '</optgroup>';
+  }
+  function qcmCard(q, st, opts) { // opts: {feedback:bool, n, total}
+    var h = '<div class="card qcm"><div class="src"><a href="' + link(q.f) + '">' + F[q.f].th + '</a><span class="muted"> · niveau ' + (q.niveau || 1) + '</span></div>';
+    h += '<div class="q">' + qt(q.q) + '</div><div class="muted small">' + (q.type === 'multiple' ? 'Plusieurs réponses possibles' : 'Une seule réponse') + '</div><ol class="opts">';
+    q.choix.forEach(function (c, i) {
+      var on = st.sel.indexOf(i) >= 0, cls = on ? ' on' : '';
+      if (opts.feedback) { var good = q.bonnes.indexOf(i) >= 0; cls += good ? (on ? ' ok' : ' miss') : (on ? ' ko' : ''); }
+      h += '<li><button class="opt' + cls + '" data-o="' + i + '"' + (opts.feedback ? ' disabled' : '') + '><span class="let">' + LET[i] + '</span><span>' + qt(c) + '</span></button></li>';
+    });
+    h += '</ol>';
+    if (opts.feedback) {
+      var sc = scoreQ(q, st.sel);
+      h += '<div class="verdict ' + (sc === 1 ? 'good' : sc ? 'half' : 'bad') + '">' + (sc === 1 ? 'Juste.' : sc ? 'Presque : une erreur (½ point).' : 'Faux. Bonne réponse : ' + q.bonnes.map(function (b) { return LET[b]; }).join(', ') + '.') + '</div>';
+      if (q.explication) h += '<div class="expl">' + qt(q.explication) + '</div>';
+    }
+    return h;
+  }
+  function bindOpts(st, onChange) {
+    $$('button.opt[data-o]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var i = +b.dataset.o, q = st.q;
+        if (q.type === 'multiple') { var k = st.sel.indexOf(i); if (k >= 0) st.sel.splice(k, 1); else st.sel.push(i); }
+        else st.sel = [i];
+        onChange();
+      });
+    });
+  }
+
+  /* ---------------------------------------------------------------- QCM d'entraînement */
+  var quiz = null;
+  function pageQcm(params) {
+    var s = params.s, go = params.go;
+    if (s && go && (!quiz || quiz.key !== s + '|' + (params.niv || '') + '|' + (params.n || ''))) {
+      var pool = shuffle(qcmPool(s, params.niv));
+      var n = params.n === 'tout' ? pool.length : Math.min(pool.length, +(params.n || (s.indexOf('f:') === 0 ? pool.length : 20)));
+      quiz = { key: s + '|' + (params.niv || '') + '|' + (params.n || ''), scope: s, list: pool.slice(0, n), i: 0, sel: [], checked: false, res: [] };
+    }
+    if (!quiz || !s || !go) return qcmConfig(params);
+    renderQuiz();
+  }
+  function qcmConfig(params) {
+    var learnedN = learnedFiches().length, errN = qcmPool('erreurs').length;
+    var h = '<div class="page"><h1 class="title">QCM</h1><p class="lede">' + D.qcm.length + ' QCM rédigés à partir de vos fiches, avec correction expliquée. Réponse unique ou multiple ; une erreur sur un QCM multiple vaut ½ point.</p>';
+    h += '<div class="panel"><div class="grid2"><label class="field"><b>Sur quoi ?</b>' + scopeSelect('qs', params.s || (learnedN ? 'apprises' : 'tout')) + '</label>' +
+      '<label class="field"><b>Combien ?</b><select class="field-in" id="qn"><option>10</option><option selected>20</option><option>40</option><option value="tout">Tout</option></select></label>' +
+      '<label class="field"><b>Niveau</b><select class="field-in" id="qniv"><option value="tous">Tous</option><option value="1">1 : connaissance</option><option value="2">2 : association, chiffres</option><option value="3">3 : raisonnement, cas</option></select></label></div>';
+    h += '<div class="row" style="margin-top:14px"><button class="btn primary" id="qgo">Commencer</button><span class="muted small" id="qcount"></span></div></div>';
+    h += '<h2 class="sec">Raccourcis</h2><div class="row">';
+    h += '<a class="btn" href="#/qcm?s=' + (learnedN ? 'apprises' : 'tout') + '&n=20&go=1">20 QCM ' + (learnedN ? 'sur mes fiches apprises' : 'au hasard') + '</a>';
+    if (errN) h += '<a class="btn" href="#/qcm?s=erreurs&n=tout&go=1">Refaire mes ' + errN + ' QCM ratés</a>';
+    h += '<a class="btn" href="#/examen">Examen blanc chronométré</a></div>';
+    h += '<h2 class="sec">Par thème</h2><table class="plain"><thead><tr><th>Thème</th><th class="n">QCM</th><th class="n">Faits</th><th class="n">Réussite</th><th></th></tr></thead><tbody>';
+    D.cats.forEach(function (c) {
+      c.themes.forEach(function (t) {
+        var ids = qcmPool('t:' + t.id); if (!ids.length) return;
+        var done = ids.filter(function (id) { return mem.qcm[id]; }), ok = done.filter(function (id) { return mem.qcm[id].lastOk; }).length;
+        h += '<tr><td>' + esc(t.name) + '</td><td class="n">' + ids.length + '</td><td class="n">' + done.length + '</td><td class="n">' + (done.length ? Math.round(100 * ok / done.length) + ' %' : '–') + '</td><td><a href="#/qcm?s=t:' + t.id + '&n=20&go=1">S’entraîner</a></td></tr>';
+      });
+    });
+    main.innerHTML = h + '</tbody></table></div>';
+    function upd() { $('#qcount').textContent = qcmPool($('#qs').value, $('#qniv').value).length + ' QCM disponibles.'; }
+    ['qs', 'qniv'].forEach(function (id) { $('#' + id).addEventListener('change', upd); }); upd();
+    $('#qgo').addEventListener('click', function () { quiz = null; location.hash = '#/qcm?s=' + encodeURIComponent($('#qs').value) + '&n=' + $('#qn').value + '&niv=' + $('#qniv').value + '&go=1'; });
+  }
+  function renderQuiz() {
+    var z = quiz, h = '<div class="page"><h1 class="title">QCM : ' + esc(scopeLabel(z.scope)) + '</h1>';
+    if (!z.list.length) { main.innerHTML = h + '<div class="empty">Aucun QCM dans cette sélection. <a href="#/qcm">Choisir une autre sélection</a></div></div>'; return; }
+    if (z.i >= z.list.length) return quizEnd();
+    var q = QCM[z.list[z.i]]; z.q = q;
+    h += '<div class="muted small">' + (z.i + 1) + ' sur ' + z.list.length + (z.res.length ? ', score ' + fmtScore(z.res) : '') + '</div><div class="progress"><span style="width:' + Math.round(100 * z.i / z.list.length) + '%"></span></div>';
+    h += qcmCard(q, z, { feedback: z.checked });
+    h += '<div class="actions row">' + (z.checked ? '<button class="btn primary" id="qnext">Question suivante <kbd>Entrée</kbd></button>' : '<button class="btn primary" id="qcheck"' + (z.sel.length ? '' : ' disabled') + '>Valider <kbd>Entrée</kbd></button>') +
+      '<a class="btn" href="#/qcm">Arrêter</a></div></div></div>';
+    main.innerHTML = h;
+    bindOpts(z, renderQuiz);
+    var c = $('#qcheck'); if (c) c.addEventListener('click', quizCheck);
+    var n = $('#qnext'); if (n) { n.addEventListener('click', quizNext); n.focus(); }
+  }
+  function fmtScore(res) { var s = res.reduce(function (a, r) { return a + r.sc; }, 0); return (Math.round(s * 2) / 2).toString().replace('.', ',') + ' / ' + res.length; }
+  function quizCheck() { var z = quiz; if (!z || z.checked || !z.sel.length) return; var sc = scoreQ(z.q, z.sel); recordQ(z.q.id, sc); z.res.push({ id: z.q.id, sel: z.sel.slice(), sc: sc }); z.checked = true; save(); renderQuiz(); }
+  function quizNext() { var z = quiz; if (!z || !z.checked) return; z.i++; z.sel = []; z.checked = false; renderQuiz(); window.scrollTo(0, 0); }
+  function quizEnd() {
+    var z = quiz, wrong = z.res.filter(function (r) { return r.sc < 1; });
+    var h = '<div class="page"><h1 class="title">Résultat : ' + fmtScore(z.res) + '</h1><p class="lede">' + esc(scopeLabel(z.scope)) + ', ' + plural(z.res.length, 'question') + '. ' + (wrong.length ? plural(wrong.length, 'erreur') + ' à revoir ci-dessous.' : 'Aucune erreur.') + '</p>';
+    h += '<div class="row">' + (wrong.length ? '<button class="btn primary" id="qredo">Refaire mes erreurs</button>' : '') + '<a class="btn" href="#/qcm">Nouvelle série</a><a class="btn" href="#/">Retour à aujourd’hui</a></div>';
+    h += reviewList(wrong);
+    main.innerHTML = h + '</div>';
+    var b = $('#qredo'); if (b) b.addEventListener('click', function () { var ids = wrong.map(function (r) { return r.id; }); quiz = { key: 'redo', scope: z.scope, list: shuffle(ids), i: 0, sel: [], checked: false, res: [] }; renderQuiz(); });
+    renderSide(parseRoute());
+  }
+  function reviewList(items) {
+    if (!items.length) return '';
+    return '<h2 class="sec">Corrections</h2><div class="list">' + items.map(function (r) {
+      var q = QCM[r.id];
+      return '<div class="it"><span></span><div><div class="ttl">' + qt(q.q) + '</div><ol class="opts small">' + q.choix.map(function (c, i) {
+        var good = q.bonnes.indexOf(i) >= 0, on = r.sel.indexOf(i) >= 0;
+        return '<li class="' + (good ? 'okt' : on ? 'kot' : '') + '"><b>' + LET[i] + '</b> ' + qt(c) + (good ? ' ✓' + (r.sel.length && !on ? ' <span class="muted">(oubliée)</span>' : '') : on ? ' ✗' : '') + '</li>';
+      }).join('') + '</ol>' + (q.explication ? '<div class="ctx">' + qt(q.explication) + '</div>' : '') + '<div class="small"><a href="' + link(q.f) + '">' + F[q.f].th + '</a></div></div></div>';
+    }).join('') + '</div>';
+  }
+
+  /* ---------------------------------------------------------------- examen blanc */
+  var exam = null, examTimer = null;
+  function pageExamen(params) {
+    if (exam && params.go) return renderExam();
+    var learnedN = learnedFiches().length;
+    var h = '<div class="page"><h1 class="title">Examen blanc</h1><p class="lede">Conditions réelles : QCM tirés au hasard, chronomètre, aucune correction avant la fin. Résultats par thème et corrections à la fin.</p>';
+    if (exam && !exam.done) h += '<p class="nb">Un examen est en cours (' + mmss(examLeft()) + ' restantes). <a href="#/examen?go=1">Reprendre l’examen</a></p>';
+    h += '<div class="panel"><div class="grid2"><label class="field"><b>Sur quoi ?</b>' + scopeSelect('es', params.s || (learnedN >= 10 ? 'apprises' : 'tout')) + '</label>' +
+      '<label class="field"><b>Nombre de QCM</b><select class="field-in" id="en"><option>20</option><option selected>40</option><option>60</option><option>100</option></select></label>' +
+      '<label class="field"><b>Temps par QCM</b><select class="field-in" id="et"><option value="45">45 s</option><option value="60" selected>1 min</option><option value="90">1 min 30</option></select></label>' +
+      '<label class="field check"><input type="checkbox" id="esuj" checked> Enchaîner avec un sujet rédactionnel</label></div>';
+    h += '<div class="row" style="margin-top:14px"><button class="btn primary" id="ego">Démarrer l’examen</button></div></div>';
+    var hist = (mem.exams || []).slice(-10).reverse();
+    if (hist.length) {
+      h += '<h2 class="sec">Mes examens blancs</h2><table class="plain"><thead><tr><th>Date</th><th>Périmètre</th><th class="n">Note /20</th><th class="n">Score</th><th class="n">Durée</th></tr></thead><tbody>' +
+        hist.map(function (x) { return '<tr><td>' + fdate(x.date) + '</td><td>' + esc(x.label) + '</td><td class="n"><b>' + (Math.round(20 * x.score / x.n * 10) / 10).toString().replace('.', ',') + '</b></td><td class="n">' + String(x.score).replace('.', ',') + ' / ' + x.n + '</td><td class="n">' + Math.round(x.dur / 60) + ' min</td></tr>'; }).join('') + '</tbody></table>';
+    }
+    main.innerHTML = h + '</div>';
+    $('#ego').addEventListener('click', function () {
+      var s = $('#es').value, n = +$('#en').value, per = +$('#et').value, pool = shuffle(qcmPool(s));
+      if (!pool.length) { alertBox('Aucun QCM dans cette sélection.'); return; }
+      var list = pool.slice(0, n);
+      exam = { scope: s, label: scopeLabel(s), list: list, ans: {}, flag: {}, i: 0, start: Date.now(), limit: list.length * per, sujet: $('#esuj').checked, done: false };
+      location.hash = '#/examen?go=1';
+    });
+  }
+  function alertBox(m) { var p = document.createElement('p'); p.className = 'nb'; p.textContent = m; main.querySelector('.page').appendChild(p); }
+  function examLeft() { return Math.max(0, exam.limit - Math.round((Date.now() - exam.start) / 1000)); }
+  function mmss(s) { return Math.floor(s / 60) + ':' + pad(s % 60); }
+  function renderExam() {
+    var x = exam; if (x.done) return examResults();
+    clearInterval(examTimer);
+    examTimer = setInterval(function () { var el = $('#etime'); if (!exam || exam.done) { clearInterval(examTimer); return; } if (!el) return; var l = examLeft(); el.textContent = mmss(l); el.classList.toggle('late', l < 120); if (!l) examFinish(); }, 1000);
+    var q = QCM[x.list[x.i]], st = { q: q, sel: (x.ans[q.id] || []).slice() };
+    var answered = Object.keys(x.ans).filter(function (k) { return x.ans[k].length; }).length;
+    var h = '<div class="page wide"><div class="exambar"><b>Examen blanc</b><span class="muted">' + esc(x.label) + '</span><span class="muted">' + answered + ' / ' + x.list.length + ' répondues</span><span class="timer num" id="etime">' + mmss(examLeft()) + '</span><button class="btn" id="efin">Terminer et corriger</button></div>';
+    h += '<div class="examgrid">' + x.list.map(function (id, i) { return '<button class="qn' + (i === x.i ? ' cur' : '') + ((x.ans[id] || []).length ? ' done' : '') + (x.flag[id] ? ' flag' : '') + '" data-i="' + i + '">' + (i + 1) + '</button>'; }).join('') + '</div>';
+    h += '<div class="examq"><div class="muted small">Question ' + (x.i + 1) + ' sur ' + x.list.length + '</div>' + qcmCard(q, st, { feedback: false }).replace('<div class="src"><a href="' + link(q.f) + '">' + F[q.f].th + '</a>', '<div class="src"><span>' + esc(THEMES[F[q.f].theme].short) + '</span>');
+    h += '<div class="actions row"><button class="btn" id="eprev"' + (x.i ? '' : ' disabled') + '>Précédente</button><button class="btn primary" id="enext">' + (x.i < x.list.length - 1 ? 'Suivante <kbd>Entrée</kbd>' : 'Revoir la grille') + '</button><button class="btn" id="eflag">' + (x.flag[q.id] ? 'Retirer le marque-page' : 'Marquer pour y revenir') + '</button></div></div></div></div>';
+    main.innerHTML = h;
+    bindOpts(st, function () { x.ans[q.id] = st.sel.slice(); renderExam(); });
+    $$('.examgrid .qn').forEach(function (b) { b.addEventListener('click', function () { x.i = +b.dataset.i; renderExam(); }); });
+    $('#eprev').addEventListener('click', function () { if (x.i) { x.i--; renderExam(); } });
+    $('#enext').addEventListener('click', examNext);
+    $('#eflag').addEventListener('click', function () { x.flag[q.id] = !x.flag[q.id]; renderExam(); });
+    var armed = false;
+    $('#efin').addEventListener('click', function () {
+      var left = x.list.length - Object.keys(x.ans).filter(function (k) { return x.ans[k].length; }).length;
+      if (left && !armed) { armed = true; this.textContent = left + ' sans réponse : confirmer'; this.classList.add('primary'); return; }
+      examFinish();
+    });
+  }
+  function examNext() { var x = exam; if (!x || x.done) return; if (x.i < x.list.length - 1) { x.i++; renderExam(); } else { var first = x.list.findIndex(function (id) { return !(x.ans[id] || []).length; }); x.i = first >= 0 ? first : 0; renderExam(); } }
+  function examFinish() {
+    var x = exam; if (!x || x.done) return; clearInterval(examTimer);
+    x.done = true; x.dur = Math.round((Date.now() - x.start) / 1000);
+    x.res = x.list.map(function (id) { var sel = x.ans[id] || [], sc = sel.length ? scoreQ(QCM[id], sel) : 0; recordQ(id, sc); return { id: id, sel: sel, sc: sc }; });
+    var score = x.res.reduce(function (a, r) { return a + r.sc; }, 0), by = {};
+    x.res.forEach(function (r) { var t = F[QCM[r.id].f].theme; by[t] = by[t] || [0, 0]; by[t][0] += r.sc; by[t][1]++; });
+    mem.exams = mem.exams || []; mem.exams.push({ date: today(), label: x.label, n: x.res.length, score: score, dur: x.dur, by: by }); logToday('exam'); save();
+    examResults(); renderSide(parseRoute());
+  }
+  function examResults() {
+    var x = exam, last = mem.exams[mem.exams.length - 1], wrong = x.res.filter(function (r) { return r.sc < 1; });
+    var note = Math.round(20 * last.score / last.n * 10) / 10;
+    var h = '<div class="page"><h1 class="title">Examen blanc : ' + String(note).replace('.', ',') + ' / 20</h1><p class="lede">' + String(last.score).replace('.', ',') + (last.score > 1 ? ' points' : ' point') + ' sur ' + last.n + ' en ' + (last.dur < 60 ? 'moins d’une minute' : Math.round(last.dur / 60) + ' min') + '. ' + esc(x.label) + '.</p>';
+    h += '<h2 class="sec">Par thème</h2><table class="plain"><thead><tr><th>Thème</th><th class="n">Score</th><th>Réussite</th></tr></thead><tbody>';
+    Object.keys(last.by).sort(function (a, b) { return last.by[a][0] / last.by[a][1] - last.by[b][0] / last.by[b][1]; }).forEach(function (t) {
+      var v = last.by[t], p = Math.round(100 * v[0] / v[1]);
+      h += '<tr><td><a href="#/theme/' + t + '">' + esc(THEMES[t].name) + '</a></td><td class="n">' + String(v[0]).replace('.', ',') + ' / ' + v[1] + '</td><td><div class="bar"><span class="' + (p < 50 ? 'lo' : '') + '" style="width:' + p + '%"></span></div></td></tr>';
+    });
+    h += '</tbody></table>';
+    h += '<div class="row" style="margin-top:16px">' + (x.sujet ? '<a class="btn primary" href="#/sujet/' + pickSujet(x.scope) + '?examen=1">Passer au sujet rédactionnel</a>' : '') + '<a class="btn" href="#/examen">Nouvel examen</a><a class="btn" href="#/qcm?s=erreurs&n=tout&go=1">Refaire mes erreurs</a></div>';
+    h += reviewList(wrong);
+    main.innerHTML = h + '</div>';
+  }
+
+  /* ---------------------------------------------------------------- sujets rédactionnels */
+  function pickSujet(scope) {
+    if (scope && scope.indexOf('p:') === 0) { var pp = parseP(scope); if (pp.p) return pickFrom(progSujets(pp.p, pp.d)); }
+    var fids = scopeFiches(scope || 'apprises'); if (!fids.length) fids = ORDER;
+    var ids = []; fids.forEach(function (f) { ids = ids.concat(SBYF[f] || []); });
+    if (!ids.length) ids = Object.keys(SUJ);
+    ids.sort(function (a, b) { return ((mem.sujets[a] || {}).tries || []).length - ((mem.sujets[b] || {}).tries || []).length; });
+    var few = ids.filter(function (i) { return ((mem.sujets[i] || {}).tries || []).length === ((mem.sujets[ids[0]] || {}).tries || []).length; });
+    return few[Math.floor(Math.random() * few.length)];
+  }
+  function pageSujets(params) {
+    var h = '<div class="page"><h1 class="title">Sujets rédactionnels</h1><p class="lede">' + Object.keys(SUJ).length + ' sujets type examen avec leur plan attendu. Rédigez votre plan en temps limité, puis cochez les points que vous aviez.</p>';
+    h += '<div class="row"><a class="btn primary" href="#/sujet/' + pickSujet('apprises') + '">Sujet au hasard (fiches apprises)</a><a class="btn" href="#/sujet/' + pickSujet('tout') + '">Sujet au hasard (tout)</a></div>';
+    D.cats.forEach(function (c) {
+      var rows = '';
+      c.themes.forEach(function (t) { t.all.forEach(function (f) { (SBYF[f] || []).forEach(function (sid) { var s = SUJ[sid], tr = (mem.sujets[sid] || {}).tries || []; var best = tr.length ? Math.max.apply(null, tr.map(function (x) { return Math.round(100 * x.s / x.m); })) : null; rows += '<div class="it"><span class="dot"' + (best !== null ? ' style="background:' + lut(best / 100) + '"' : '') + '></span><div><a class="ttl" href="#/sujet/' + sid + '">' + qt(s.sujet) + '</a><div class="small muted">' + s.duree + ' min' + (tr.length ? ', ' + plural(tr.length, 'essai') + ', meilleur ' + best + ' %' : '') + '</div></div></div>'; }); }); });
+      if (rows) h += '<h2 class="sec">' + esc(c.name) + '</h2><div class="list">' + rows + '</div>';
+    });
+    main.innerHTML = h + '</div>';
+  }
+  var sujTimer = null;
+  function pageSujet(sid, params) {
+    var s = SUJ[sid]; if (!s) return pageSujets({});
+    var st = mem.sujets[sid] = mem.sujets[sid] || { tries: [], draft: '' };
+    var h = '<div class="page"><div class="crumbs"><a href="#/sujets">Sujets rédactionnels</a> / <a href="' + link(s.f) + '">' + F[s.f].th + '</a></div><h1 class="title">' + qt(s.sujet) + '</h1>';
+    h += '<div class="row"><span class="timer num" id="stime">' + s.duree + ':00</span><button class="btn" id="sstart">Lancer le chrono (' + s.duree + ' min)</button><span class="muted small">Rédigez votre plan détaillé : parties, sous-parties, chiffres clés.</span></div>';
+    h += '<textarea class="draft" id="sdraft" placeholder="I. Introduction&#10;   - …&#10;II. …">' + esc(st.draft || '') + '</textarea>';
+    h += '<div class="row"><button class="btn primary" id="sreveal">Afficher le plan attendu</button><a class="btn" href="#/sujet/' + pickSujet('apprises') + '">Autre sujet</a></div>';
+    h += '<div id="splan" hidden><h2 class="sec">Plan attendu : cochez ce que vous aviez</h2><div class="plancheck">' + s.plan.map(function (p, i) {
+      return '<div class="pp"><b>' + qt(p.partie) + '</b><ul>' + p.points.map(function (pt, j) { return '<li><label><input type="checkbox" data-k="' + i + '-' + j + '"> ' + qt(pt) + '</label></li>'; }).join('') + '</ul></div>';
+    }).join('') + '</div><div class="row"><button class="btn primary" id="ssave">Enregistrer mon score</button><span id="sscore" class="muted"></span></div></div>';
+    if (st.tries.length) h += '<p class="small muted">Essais précédents : ' + st.tries.map(function (t) { return fdate(t.d) + ' (' + Math.round(100 * t.s / t.m) + ' %)'; }).join(', ') + '.</p>';
+    main.innerHTML = h + '</div>';
+    var ta = $('#sdraft'), tmo; ta.addEventListener('input', function () { clearTimeout(tmo); tmo = setTimeout(function () { st.draft = ta.value; save(); }, 400); });
+    clearInterval(sujTimer);
+    function startTimer() {
+      var end = Date.now() + s.duree * 60000; $('#sstart').disabled = true;
+      sujTimer = setInterval(function () { var el = $('#stime'); if (!el) { clearInterval(sujTimer); return; } var l = Math.max(0, Math.round((end - Date.now()) / 1000)); el.textContent = mmss(l); el.classList.toggle('late', l < 120); if (!l) { clearInterval(sujTimer); beep(); el.textContent = 'Temps écoulé'; } }, 1000);
+    }
+    $('#sstart').addEventListener('click', startTimer);
+    if (params.examen) startTimer();
+    $('#sreveal').addEventListener('click', function () { $('#splan').hidden = false; $('#splan').scrollIntoView({ block: 'start', behavior: 'smooth' }); });
+    function cnt() { var all = $$('#splan input[type=checkbox]'), ok = all.filter(function (c) { return c.checked; }).length; $('#sscore').textContent = ok + ' / ' + all.length + ' points (' + Math.round(100 * ok / all.length) + ' %)'; return [ok, all.length]; }
+    $$('#splan input[type=checkbox]').forEach(function (c) { c.addEventListener('change', cnt); }); cnt();
+    $('#ssave').addEventListener('click', function () { var r = cnt(); st.tries.push({ d: today(), s: r[0], m: r[1] }); logToday('sujet'); save(); this.textContent = 'Score enregistré'; this.disabled = true; });
+  }
+
+  /* ---------------------------------------------------------------- carnet d'erreurs */
+  function pageErreurs() {
+    var qe = qcmPool('erreurs'), ce = Object.keys(mem.cards).filter(function (c) { return CARD[c] && mem.cards[c].lapses > 0; }).sort(function (a, b) { return mem.cards[b].lapses - mem.cards[a].lapses; });
+    var ze = D.clozes.filter(function (z) { var k = mem.clozes[z.id]; return k && k.miss > (k.ok || 0); });
+    var h = '<div class="page"><h1 class="title">Carnet d’erreurs</h1><p class="lede">Tout ce que vous avez raté récemment, au même endroit. Une erreur disparaît dès que vous réussissez la question.</p>';
+    h += '<div class="row"><a class="btn primary' + (qe.length ? '' : ' disabled') + '" href="#/qcm?s=erreurs&n=tout&go=1">Refaire les QCM ratés (' + qe.length + ')</a><a class="btn" href="#/chiffres?portee=erreurs">Revoir les chiffres ratés (' + ze.length + ')</a><a class="btn" href="#/revision">Réviser les questions dues</a></div>';
+    if (!qe.length && !ce.length && !ze.length) { main.innerHTML = h + '<div class="empty" style="margin-top:20px">Aucune erreur enregistrée pour l’instant.</div></div>'; return; }
+    if (qe.length) h += '<h2 class="sec">QCM ratés</h2>' + reviewList(qe.slice(0, 40).map(function (id) { return { id: id, sel: [] }; })).replace('<h2 class="sec">Corrections</h2>', '');
+    if (ce.length) h += '<h2 class="sec">Questions de révision les plus ratées</h2><div class="list">' + ce.slice(0, 30).map(function (cid) { var c = CARD[cid]; return '<div class="it"><span class="small muted num">' + mem.cards[cid].lapses + '×</span><div><div class="ttl">' + c.q + '</div><div class="ctx">' + c.a + '</div><div class="small"><a href="' + link(c.f) + '">' + F[c.f].th + '</a></div></div></div>'; }).join('') + '</div>';
+    if (ze.length) h += '<h2 class="sec">Chiffres à revoir</h2><div class="list">' + ze.slice(0, 40).map(function (z) { return '<div class="it"><span></span><div class="ctx">' + esc(z.b) + ' <b class="v">' + esc(z.v) + '</b> ' + esc(z.a) + ' <a class="small" href="' + link(z.f) + '">' + F[z.f].th + '</a></div></div>'; }).join('') + '</div>';
+    main.innerHTML = h + '</div>';
+  }
+
+  /* ---------------------------------------------------------------- statistiques */
+  function pageStats() {
+    var learned = learnedFiches().length, qdone = Object.keys(mem.qcm).filter(function (id) { return QCM[id]; }), qok = qdone.filter(function (id) { return mem.qcm[id].lastOk; }).length;
+    var solid = Object.keys(mem.cards).filter(function (c) { return CARD[c] && mem.cards[c].int >= 21; }).length;
+    var h = '<div class="page wide"><h1 class="title">Statistiques</h1>';
+    h += '<div class="kpis"><div><b>' + learned + '</b><span>/ ' + ORDER.length + ' fiches apprises</span></div><div><b>' + qdone.length + '</b><span>/ ' + D.qcm.length + ' QCM faits</span></div><div><b>' + (qdone.length ? Math.round(100 * qok / qdone.length) + ' %' : '–') + '</b><span>de réussite aux QCM</span></div><div><b>' + solid + '</b><span>questions solides</span></div><div><b>' + (mem.exams || []).length + '</b><span>examens blancs</span></div></div>';
+    // activité 21 jours (SVG)
+    var days = []; for (var i = 20; i >= 0; i--) days.push(addDays(today(), -i));
+    var keys = [['learned', 'Fiches', 'var(--lut2)', 5], ['cards', 'Questions', 'var(--teal)', 1], ['qcm', 'QCM', 'var(--lut3)', 1], ['clozes', 'Chiffres', 'var(--muted)', 1]];
+    var tot = days.map(function (d) { var l = mem.log[d] || {}; return keys.reduce(function (s, k) { return s + (l[k[0]] || 0) * k[3]; }, 0); }), mx = Math.max.apply(null, tot.concat([10]));
+    var W = 840, H = 160, bw = W / days.length;
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + (H + 22) + '" class="chart" role="img" aria-label="Activité des 21 derniers jours">';
+    days.forEach(function (d, i) {
+      var l = mem.log[d] || {}, y = H;
+      keys.forEach(function (k) { var v = (l[k[0]] || 0) * k[3]; if (!v) return; var hh = v / mx * (H - 8); y -= hh; svg += '<rect x="' + (i * bw + 3) + '" y="' + y + '" width="' + (bw - 6) + '" height="' + hh + '" fill="' + k[2] + '" rx="2"><title>' + fdate(d) + ' : ' + (l[k[0]] || 0) + ' ' + k[1].toLowerCase() + '</title></rect>'; });
+      if (i % 3 === 0) svg += '<text x="' + (i * bw + bw / 2) + '" y="' + (H + 16) + '" text-anchor="middle" font-size="11" fill="currentColor" opacity=".6">' + fdate(d) + '</text>';
+    });
+    if (!tot.some(function (t) { return t; })) svg += '<text x="' + W / 2 + '" y="' + H / 2 + '" text-anchor="middle" font-size="14" fill="currentColor" opacity=".55">Votre activité s’affichera ici dès vos premières révisions.</text>';
+    svg += '</svg>';
+    h += '<h2 class="sec">Activité des 3 dernières semaines</h2><div class="panel">' + svg + '<div class="legend">' + keys.map(function (k) { return '<span class="sw" style="background:' + k[2] + '"></span>' + k[1] + (k[3] > 1 ? ' (×' + k[3] + ')' : ''); }).join('') + '</div></div>';
+    // par thème
+    var rows = [];
+    D.cats.forEach(function (c) { c.themes.forEach(function (t) {
+      var fl = t.all.filter(function (f) { return (mem.fiches[f] || {}).learned; }).length, ids = qcmPool('t:' + t.id), dn = ids.filter(function (id) { return mem.qcm[id]; }), ok = dn.filter(function (id) { return mem.qcm[id].lastOk; }).length;
+      rows.push({ t: t, fl: fl, n: t.all.length, q: ids.length, dn: dn.length, p: dn.length ? Math.round(100 * ok / dn.length) : null });
+    }); });
+    var weak = rows.filter(function (r) { return r.p !== null && r.dn >= 5; }).sort(function (a, b) { return a.p - b.p; }).slice(0, 5);
+    if (weak.length) h += '<h2 class="sec">Points faibles</h2><div class="list">' + weak.map(function (r) { return '<div class="it"><b class="num">' + r.p + ' %</b><div><a class="ttl" href="#/theme/' + r.t.id + '">' + esc(r.t.name) + '</a><div class="small"><a href="#/qcm?s=t:' + r.t.id + '&n=20&go=1">20 QCM sur ce thème</a></div></div></div>'; }).join('') + '</div>';
+    h += '<h2 class="sec">Par thème</h2><table class="plain"><thead><tr><th>Thème</th><th class="n">Fiches apprises</th><th class="n">QCM faits</th><th>Réussite QCM</th></tr></thead><tbody>' + rows.map(function (r) {
+      return '<tr><td><a href="#/theme/' + r.t.id + '">' + esc(r.t.name) + '</a></td><td class="n">' + r.fl + ' / ' + r.n + '</td><td class="n">' + r.dn + ' / ' + r.q + '</td><td>' + (r.p === null ? '<span class="muted small">–</span>' : '<div class="bar"><span class="' + (r.p < 50 ? 'lo' : '') + '" style="width:' + r.p + '%"></span></div>') + '</td></tr>';
+    }).join('') + '</tbody></table>';
+    main.innerHTML = h + '</div>';
+  }
+
+  /* ---------------------------------------------------------------- bibliothèque PDF */
+  function pagePdf() {
+    var P = D.pdf || {};
+    var h = '<div class="page"><h1 class="title">Fiches en PDF</h1><p class="lede">Pour imprimer, annoter ou réviser hors du site. Les PDF s’ouvrent dans un nouvel onglet.</p>';
+    h += '<div class="list">';
+    if (P.all) h += '<div class="it"><span></span><div><a class="ttl" target="_blank" href="' + P.all + '">Toutes les fiches, avec sommaire et signets</a><div class="small muted">Le document complet, à feuilleter ou imprimer.</div></div></div>';
+    if (P.qcm) h += '<div class="it"><span></span><div><a class="ttl" target="_blank" href="' + P.qcm + '">Cahier de QCM avec corrigé</a><div class="small muted">Tous les QCM par thème, corrigés en fin de thème.</div></div></div>';
+    if (P.sujets) h += '<div class="it"><span></span><div><a class="ttl" target="_blank" href="' + P.sujets + '">Sujets rédactionnels et plans attendus</a></div></div>';
+    h += '</div>';
+    D.cats.forEach(function (c) {
+      h += '<h2 class="sec">' + esc(c.name) + '</h2><div class="list">';
+      c.themes.forEach(function (t) {
+        h += '<div class="it"><span></span><div>' + (P.themes && P.themes[t.id] ? '<a class="ttl" target="_blank" href="' + P.themes[t.id] + '">' + esc(t.name) + ' (thème complet)</a>' : '<b>' + esc(t.name) + '</b>') +
+          '<ul class="pdfl">' + t.all.map(function (f) { return '<li><a target="_blank" href="' + F[f].pdf + '">' + F[f].th + '</a></li>'; }).join('') + '</ul></div></div>';
+      });
+      h += '</div>';
+    });
+    main.innerHTML = h + '</div>';
+  }
+
+  /* ---------------------------------------------------------------- minuteur de travail */
+  var pomo = null;
+  function beep() {
+    try { var a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(), g = a.createGain(); o.frequency.value = 660; o.connect(g); g.connect(a.destination); g.gain.setValueAtTime(.2, a.currentTime); g.gain.exponentialRampToValueAtTime(.001, a.currentTime + 1.2); o.start(); o.stop(a.currentTime + 1.2); } catch (e) { }
+  }
+  function renderPomo() {
+    var el = $('#pomo'); if (!el) return;
+    if (!pomo) { el.innerHTML = '<button class="linkbtn" data-p="25">Minuteur 25 min</button> <button class="linkbtn" data-p="50">50 min</button>'; }
+    else { var l = Math.max(0, Math.round((pomo.end - Date.now()) / 1000)); el.innerHTML = '<span class="num">' + (pomo.pause ? 'Pause ' : 'Travail ') + mmss(l) + '</span> <button class="linkbtn" data-p="0">Arrêter</button>'; }
+    $$('#pomo [data-p]').forEach(function (b) { b.onclick = function () { var m = +b.dataset.p; if (!m) { clearInterval(pomo.t); pomo = null; renderPomo(); return; } startPomo(m, false); }; });
+  }
+  function startPomo(min, pause) {
+    if (pomo) clearInterval(pomo.t);
+    pomo = { end: Date.now() + min * 60000, pause: pause, min: min };
+    pomo.t = setInterval(function () {
+      if (Date.now() >= pomo.end) { beep(); var was = pomo; clearInterval(pomo.t); if (!was.pause) startPomo(was.min >= 50 ? 10 : 5, true); else { pomo = null; renderPomo(); } document.title = was.pause ? 'Au travail – Révision DEMS' : 'Pause – Révision DEMS'; return; }
+      renderPomo();
+    }, 1000);
+    renderPomo();
+  }
+
+  /* ---------------------------------------------------------------- QCM automatiques sur les chiffres */
+  function unitOf(v) { var m = String(v).match(/[0-9][0-9.,\s]*([^\d\s].*)$/); return m ? m[1].replace(/[)\].;:]+$/, '').trim().toLowerCase() : ''; }
+  var UNITS = null;
+  function numChoices(z) {
+    if (!UNITS) { UNITS = {}; D.clozes.forEach(function (c) { var u = unitOf(c.v); if (!u) return; (UNITS[u] = UNITS[u] || []).push(c); }); }
+    var u = unitOf(z.v); if (!u || !UNITS[u]) return null;
+    var same = UNITS[u].filter(function (c) { return c.v !== z.v; }), theme = F[z.f].theme;
+    var pref = shuffle(same.filter(function (c) { return F[c.f].theme === theme; })).concat(shuffle(same));
+    var vals = []; pref.forEach(function (c) { if (vals.indexOf(c.v) < 0 && vals.length < 3) vals.push(c.v); });
+    if (vals.length < 3) return null;
+    return shuffle(vals.concat([z.v]));
+  }
+
+  /* ================================================================== PROGRAMMES CIBLÉS (week-ends thématiques) */
+  var JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+  function wday(s) { return JOURS[parse(s).getDay()]; }
+  function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+  function progs() {
+    var hid = mem.hiddenProgs || {};
+    return (D.programmes || []).filter(function (p) { return !hid[p.id]; }).concat(mem.progs || []);
+  }
+  function progById(id) { var all = (D.programmes || []).concat(mem.progs || []); for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i]; return null; }
+  function progEnd(p) { return addDays(p.debut, p.jours.length - 1); }
+  function progDayIdx(p, t) { var i = diff(p.debut, t || today()); return i >= 0 && i < p.jours.length ? i : -1; }
+  function progDate(p, i) { return addDays(p.debut, i); }
+  function progDayName(p, i) { var d = progDate(p, i); return cap(wday(d)) + ' ' + fdate(d); }
+  // programme à mettre en avant : en cours, sinon qui commence dans ≤ 3 jours, sinon terminé depuis ≤ 2 jours
+  function featuredProg() {
+    var t = today(), best = null;
+    progs().forEach(function (p) {
+      var st = progDayIdx(p, t) >= 0 ? 0 : (diff(t, p.debut) > 0 && diff(t, p.debut) <= 3 ? 1 : (diff(progEnd(p), t) > 0 && diff(progEnd(p), t) <= 2 ? 2 : 9));
+      if (st < 9 && (!best || st < best.st)) best = { p: p, st: st };
+    });
+    return best;
+  }
+  function progRx(p, k) { var key = '_rx_' + k; if (p[k] && !p[key]) p[key] = new RegExp(p[k], 'i'); return p[key]; }
+  function progMatch(p, text) {
+    var rx = progRx(p, 'motif'); if (!rx) return true;
+    var ig = progRx(p, 'ignore'); if (ig) text = text.replace(new RegExp(p.ignore, 'gi'), ' ');
+    if (!rx.test(text)) return false;
+    var ex = progRx(p, 'exclu'), fo = progRx(p, 'fort');
+    if (ex && ex.test(text) && fo && !fo.test(text)) return false;
+    return true;
+  }
+  function progItems(p, d) { return d === undefined || d === null || d === '' ? [].concat.apply([], p.jours.map(function (j) { return j.items; })) : (p.jours[+d] || { items: [] }).items; }
+  function parseP(s) { var a = s.slice(2).split(':'); return { p: progById(a[0]), d: a.length > 1 ? +a[1] : null }; }
+  function itemHref(p, it) {
+    if (!it.partiel) return link(it.f);
+    return '#/fiche/' + it.f + '?hl=' + encodeURIComponent(p.id) + (it.sec ? '&sec=' + encodeURIComponent(it.sec) : '');
+  }
+  function itemOk(p, it, text) { return !it.partiel || progMatch(p, text); }
+  function qText(q) { return q.q + ' ' + q.choix.join(' ') + ' ' + (q.explication || ''); }
+  function progQcm(p, d) { var out = []; progItems(p, d).forEach(function (it) { (QBYF[it.f] || []).forEach(function (id) { if (out.indexOf(id) < 0 && itemOk(p, it, qText(QCM[id]))) out.push(id); }); }); return out; }
+  function progCards(p, d) { var out = []; progItems(p, d).forEach(function (it) { F[it.f].cards.forEach(function (cid) { var c = CARD[cid]; if (out.indexOf(cid) < 0 && itemOk(p, it, strip(c.q + ' ' + c.a))) out.push(cid); }); }); return out; }
+  function progClozes(p, d) {
+    var items = progItems(p, d), by = {};
+    items.forEach(function (it) { (by[it.f] = by[it.f] || []).push(it); });
+    return D.clozes.filter(function (z) { var its = by[z.f]; if (!its) return false; var tx = z.h + ' ' + z.b + ' ' + z.v + ' ' + z.a; return its.some(function (it) { return itemOk(p, it, tx); }); });
+  }
+  function progSujets(p, d) { var out = []; progItems(p, d).forEach(function (it) { (SBYF[it.f] || []).forEach(function (sid) { var s = SUJ[sid]; if (out.indexOf(sid) < 0 && itemOk(p, it, s.sujet)) out.push(sid); }); }); return out; }
+  function progFiches(p, d) { var out = []; progItems(p, d).forEach(function (it) { if (out.indexOf(it.f) < 0) out.push(it.f); }); return out; }
+  function itemDone(it) { return !!(mem.fiches[it.f] || {}).learned || !!((mem.progDone || {})[it.f + '|' + (it.sec || '')]); }
+  function progStats(p, d) {
+    var its = progItems(p, d), done = its.filter(itemDone).length, qs = progQcm(p, d), qd = qs.filter(function (id) { return mem.qcm[id]; }), qok = qd.filter(function (id) { return mem.qcm[id].lastOk; }).length;
+    var pages = its.reduce(function (s, it) { return s + (it.partiel ? Math.max(1, Math.round(fpages(it.f) / 5)) : fpages(it.f)); }, 0);
+    return { items: its.length, done: done, qcm: qs.length, qdone: qd.length, qok: qok, pages: pages };
+  }
+  function pickFrom(ids) {
+    if (!ids.length) return pickSujet('tout');
+    ids = ids.slice().sort(function (a, b) { return ((mem.sujets[a] || {}).tries || []).length - ((mem.sujets[b] || {}).tries || []).length; });
+    var few = ids.filter(function (i) { return ((mem.sujets[i] || {}).tries || []).length === ((mem.sujets[ids[0]] || {}).tries || []).length; });
+    return few[Math.floor(Math.random() * few.length)];
+  }
+  function itemsHtml(p, its) {
+    return '<ul class="plist">' + its.map(function (it) {
+      var done = itemDone(it), f = F[it.f];
+      return '<li class="' + (done ? 'done' : '') + '"><span class="ck" aria-hidden="true">' + (done ? '✓' : '') + '</span><div><a href="' + itemHref(p, it) + '">' + f.th + '</a>' +
+        (it.partiel ? '<div class="small muted">' + (it.sec ? 'Partie « ' + esc(it.sec) + ' » seulement' : 'Passages sur le sujet surlignés dans la fiche') + '</div>' : '') +
+        '</div><span class="muted small num nowrap">' + (it.partiel ? 'extrait' : fpages(it.f) + ' p.') + '</span></li>';
+    }).join('') + '</ul>';
+  }
+  function dayActions(p, d, primary) {
+    var sc = 'p:' + p.id + ':' + d, nq = progQcm(p, d).length, nc = progCards(p, d).length, nz = progClozes(p, d).length, ss = progSujets(p, d);
+    var h = '<div class="row">';
+    var first = p.jours[d].items.filter(function (it) { return !itemDone(it); })[0];
+    if (primary && first) h += '<a class="btn primary" href="' + itemHref(p, first) + '">Ouvrir la prochaine fiche</a>';
+    if (nq) h += '<a class="btn" href="#/qcm?s=' + sc + '&n=tout&go=1">QCM du jour (' + nq + ')</a>';
+    if (nc) h += '<a class="btn" href="#/revision?p=' + p.id + ':' + d + '">Questions (' + nc + ')</a>';
+    if (nz) h += '<a class="btn" href="#/chiffres?portee=' + sc + '&mode=qcm">Chiffres (' + nz + ')</a>';
+    if (ss.length) h += '<a class="btn" href="#/sujet/' + pickFrom(ss) + '">Sujet rédactionnel</a>';
+    if (p.jours[d].examen) h += '<a class="btn' + (primary && !first ? ' primary' : '') + '" href="#/examen?s=p:' + p.id + '">Examen blanc du programme</a>';
+    return h + '</div>';
+  }
+  // encadré de la page « Aujourd'hui »
+  function progPanel() {
+    var fp = featuredProg(); if (!fp) return '';
+    var p = fp.p, t = today(), i = progDayIdx(p, t), h = '<div class="prog panel">';
+    if (fp.st === 0) {
+      var j = p.jours[i], s = progStats(p, i);
+      h += '<div class="phead"><div><div class="eyebrow">' + esc(p.titre) + ' · jour ' + (i + 1) + ' sur ' + p.jours.length + '</div><h2>' + esc(progDayName(p, i)) + ' : ' + esc(j.titre) + '</h2></div>' +
+        '<a class="small" href="#/programme/' + p.id + '">Tout le programme</a></div>';
+      if (j.conseil) h += '<p class="small muted">' + esc(j.conseil) + '</p>';
+      h += itemsHtml(p, j.items);
+      h += '<div class="small muted pstat">' + s.done + ' / ' + s.items + ' fiches faites aujourd’hui' + (s.qdone ? ' · ' + s.qdone + ' / ' + s.qcm + ' QCM du jour faits, ' + Math.round(100 * s.qok / s.qdone) + ' % justes' : '') + '</div>';
+      h += dayActions(p, i, true);
+    } else if (fp.st === 1) {
+      var n = diff(t, p.debut);
+      h += '<div class="phead"><div><div class="eyebrow">Programme à venir</div><h2>' + esc(p.titre) + ' : ' + (n === 1 ? 'demain' : 'dans ' + n + ' jours') + '</h2></div><a class="small" href="#/programme/' + p.id + '">Voir le programme</a></div>';
+      h += '<p class="small muted">' + esc(p.intro || '') + '</p><ol class="pdays">' + p.jours.map(function (j, k) { return '<li><b>' + esc(progDayName(p, k)) + '</b> : ' + esc(j.titre) + '</li>'; }).join('') + '</ol>';
+    } else {
+      var sa = progStats(p);
+      h += '<div class="phead"><div><div class="eyebrow">Programme terminé</div><h2>' + esc(p.titre) + '</h2></div><a class="small" href="#/programme/' + p.id + '">Bilan</a></div>';
+      h += '<p class="small">' + sa.done + ' / ' + sa.items + ' fiches faites' + (sa.qdone ? ', ' + sa.qdone + ' QCM faits (' + Math.round(100 * sa.qok / sa.qdone) + ' % justes)' : '') + '. Les questions des fiches apprises reviennent maintenant dans la révision espacée.</p>' +
+        '<div class="row"><a class="btn" href="#/qcm?s=p:' + p.id + '&n=20&go=1">20 QCM de rappel</a><a class="btn" href="#/qcm?s=erreurs&n=tout&go=1">Refaire mes erreurs</a></div>';
+    }
+    return h + '</div>';
+  }
+  // page d'un programme
+  function pageProgramme(id) {
+    var p = progById(id); if (!p) { main.innerHTML = '<div class="page"><p class="empty">Programme introuvable.</p></div>'; return; }
+    var s = progStats(p), t = today(), cur = progDayIdx(p, t);
+    var h = '<div class="page wide"><div class="crumbs"><a href="#/planning">Planning</a> / Programmes</div><h1 class="title">' + esc(p.titre) + '</h1>';
+    h += '<p class="lede">' + esc(cap(wday(p.debut))) + ' ' + fdate(p.debut) + ' → ' + wday(progEnd(p)) + ' ' + fdate(progEnd(p)).replace(/\.$/, '') + '. ' + esc(p.intro || '') + '</p>';
+    h += '<div class="kpis"><div><b>' + s.done + '</b><span>/ ' + s.items + ' fiches faites</span></div><div><b>' + s.pages + '</b><span>pages environ</span></div><div><b>' + s.qdone + '</b><span>/ ' + s.qcm + ' QCM faits</span></div><div><b>' + (s.qdone ? Math.round(100 * s.qok / s.qdone) + ' %' : '–') + '</b><span>de réussite</span></div><div><b>' + progSujets(p).length + '</b><span>sujets rédactionnels</span></div></div>';
+    h += '<div class="row" style="margin:14px 0 4px"><a class="btn primary" href="#/qcm?s=p:' + p.id + '&n=20&go=1">20 QCM sur tout le programme</a><a class="btn" href="#/examen?s=p:' + p.id + '">Examen blanc du programme</a><a class="btn" href="#/chiffres?portee=p:' + p.id + '&mode=qcm">Chiffres</a><a class="btn" href="#/sujet/' + pickFrom(progSujets(p)) + '">Sujet rédactionnel</a></div>';
+    h += '<div class="pgrid">' + p.jours.map(function (j, k) {
+      var st = progStats(p, k);
+      return '<section class="panel' + (k === cur ? ' now' : '') + '"><div class="eyebrow">Jour ' + (k + 1) + (k === cur ? ' · aujourd’hui' : '') + '</div><h2>' + esc(progDayName(p, k)) + '</h2><p class="ptitle">' + esc(j.titre) + '</p>' +
+        (j.conseil ? '<p class="small muted">' + esc(j.conseil) + '</p>' : '') + itemsHtml(p, j.items) +
+        '<div class="small muted pstat">' + st.done + ' / ' + st.items + ' faites · environ ' + st.pages + ' pages · ' + st.qcm + ' QCM</div>' + dayActions(p, k, k === cur) + '</section>';
+    }).join('') + '</div>';
+    h += '<p class="small muted">Une fiche est cochée quand vous cliquez sur « J’ai appris cette fiche ». Pour les extraits (une partie d’un chapitre transversal), utilisez le bouton « Extrait fait » en haut de la fiche ouverte depuis ce programme.</p>';
+    if ((mem.progs || []).some(function (x) { return x.id === p.id; })) h += '<button class="btn" id="pdel">Supprimer ce programme</button>';
+    else h += '<button class="linkbtn small" id="phide">Masquer ce programme</button>';
+    main.innerHTML = h + '</div>';
+    var del = $('#pdel'); if (del) del.addEventListener('click', function () { mem.progs = (mem.progs || []).filter(function (x) { return x.id !== p.id; }); save(); location.hash = '#/planning'; });
+    var hide = $('#phide'); if (hide) hide.addEventListener('click', function () { mem.hiddenProgs = mem.hiddenProgs || {}; mem.hiddenProgs[p.id] = 1; save(); location.hash = '#/planning'; });
+  }
+  // bloc « Programmes » de la page Planning, avec création d'un programme par thèmes
+  function progPlanningHtml() {
+    var h = '<h2 class="sec">Programmes ciblés</h2><p class="small muted">Un thème sur quelques jours (un week-end, par exemple) : fiches réparties par jour, QCM, questions, chiffres et sujets limités à ce thème, examen blanc le dernier jour.</p>';
+    var list = progs();
+    if (list.length) h += '<div class="list">' + list.map(function (p) { var s = progStats(p); return '<div class="it"><span></span><div><a class="ttl" href="#/programme/' + p.id + '">' + esc(p.titre) + '</a><div class="small muted">' + cap(wday(p.debut)) + ' ' + fdate(p.debut) + ' → ' + wday(progEnd(p)) + ' ' + fdate(progEnd(p)) + ' · ' + s.done + ' / ' + s.items + ' fiches faites · ' + s.qcm + ' QCM</div></div></div>'; }).join('') + '</div>';
+    var hidden = (D.programmes || []).filter(function (p) { return (mem.hiddenProgs || {})[p.id]; });
+    if (hidden.length) h += '<p class="small"><button class="linkbtn" id="punhide">Réafficher les programmes masqués (' + hidden.length + ')</button></p>';
+    h += '<details class="panel pnew"><summary><b>Créer un programme</b></summary><div class="grid2" style="margin-top:12px">' +
+      '<label class="field"><b>Nom</b><input class="field-in" id="pn-name" placeholder="Week-end cœur"></label>' +
+      '<label class="field"><b>Premier jour</b><input class="field-in" type="date" id="pn-start" value="' + addDays(today(), 1) + '"></label>' +
+      '<label class="field"><b>Nombre de jours</b><select class="field-in" id="pn-days">' + [1, 2, 3, 4, 5, 6, 7].map(function (n) { return '<option' + (n === 3 ? ' selected' : '') + '>' + n + '</option>'; }).join('') + '</select></label></div>' +
+      '<div class="field" style="margin-top:10px"><b>Thèmes</b><div class="pthemes">' + D.cats.map(function (c) { return c.themes.filter(function (t) { return t.id !== 'add'; }).map(function (t) { return '<label><input type="checkbox" value="' + t.id + '"> ' + esc(t.short) + '</label>'; }).join(''); }).join('') + '</div></div>' +
+      '<p class="small muted">Les fiches des thèmes choisis (et leurs compléments) sont réparties par jour selon leur nombre de pages, dans l’ordre conseillé.</p>' +
+      '<div class="row"><button class="btn primary" id="pn-go">Créer</button><span class="small muted" id="pn-msg"></span></div></details>';
+    return h;
+  }
+  function bindProgPlanning() {
+    var un = $('#punhide'); if (un) un.addEventListener('click', function () { mem.hiddenProgs = {}; save(); route(); });
+    var go = $('#pn-go'); if (!go) return;
+    go.addEventListener('click', function () {
+      var themes = $$('.pthemes input:checked').map(function (x) { return x.value; }), n = +$('#pn-days').value, start = $('#pn-start').value, name = $('#pn-name').value.trim();
+      if (!themes.length || !start) { $('#pn-msg').textContent = 'Choisissez au moins un thème et une date.'; return; }
+      var sel = {}; themes.forEach(function (t) { sel[t] = 1; });
+      var fs = [], last = null;
+      ORDER.forEach(function (f) { var th = F[f].theme; if (th !== 'add') last = th; if (sel[th] || (th === 'add' && sel[last])) fs.push(f); });
+      var total = fs.reduce(function (s, f) { return s + fpages(f); }, 0), per = total / n, days = [], acc = 0;
+      for (var k = 0; k < n; k++) days.push({ titre: 'Partie ' + (k + 1), items: [] });
+      fs.forEach(function (f) { var k = Math.min(n - 1, Math.floor(acc / per)); days[k].items.push({ f: f }); acc += fpages(f); });
+      days = days.filter(function (d) { return d.items.length; });
+      days[days.length - 1].examen = true;
+      days.forEach(function (d) { d.titre = d.items.map(function (it) { return F[it.f].title; }).slice(0, 2).join(' ; ') + (d.items.length > 2 ? '…' : ''); });
+      var p = { id: 'u' + Date.now().toString(36), titre: name || themes.map(function (t) { return THEMES[t].short; }).join(', '), debut: start, intro: '', jours: days };
+      p.court = p.titre;
+      mem.progs = (mem.progs || []).concat([p]); save(); location.hash = '#/programme/' + p.id;
+    });
+  }
+  // fiche ouverte depuis un programme : surligner les passages, aller à la partie, cocher l'extrait
+  function progFicheExtras(fid, params, art) {
+    var p = params.hl ? progById(params.hl) : null, target = null;
+    if (params.sec) {
+      $$('h2,h3,h4', art).some(function (hd) { if (hd.textContent.indexOf(params.sec) >= 0) { target = hd; return true; } return false; });
+      if (target) target.classList.add('flash');
+    }
+    if (!p) return target;
+    var hits = [];
+    var scopeEls = target ? (function () { var out = [], lvl = +target.tagName[1], n = target.nextElementSibling; while (n && !(/^H[2-4]$/.test(n.tagName) && +n.tagName[1] <= lvl)) { out.push(n); n = n.nextElementSibling; } return out; })() : [art];
+    scopeEls.forEach(function (root) {
+      $$('tr, li, p', root).concat(/^(TR|LI|P)$/.test(root.tagName) ? [root] : []).forEach(function (el) {
+        if (el.closest('.autotest') || el.closest('.cle') || el.classList.contains('sources') || el.querySelector('li, p, tr')) return;
+        if (progMatch(p, el.textContent)) { el.classList.add('hlprog'); hits.push(el); }
+      });
+    });
+    var key = fid + '|' + (params.sec || ''), done = !!(mem.progDone || {})[key];
+    var bar = document.createElement('div'); bar.className = 'progbar';
+    bar.innerHTML = '<span><b>' + esc(p.court || p.titre) + '</b> · ' + (params.sec ? 'partie « ' + esc(params.sec) + ' »' : 'extrait') + (hits.length ? ', ' + plural(hits.length, 'passage surligné', 'passages surlignés') : '') + '</span>' +
+      (hits.length ? '<button class="btn" id="hlnext">Passage suivant</button>' : '') +
+      '<button class="btn' + (done ? ' on' : ' primary') + '" id="hldone">' + (done ? 'Extrait fait ✓' : 'Extrait fait') + '</button><a class="btn" href="#/programme/' + p.id + '">Retour au programme</a>';
+    art.parentNode.insertBefore(bar, art);
+    var k = -1;
+    var nx = $('#hlnext'); if (nx) nx.addEventListener('click', function () { k = (k + 1) % hits.length; hits[k].scrollIntoView({ block: 'center', behavior: 'smooth' }); hits.forEach(function (e) { e.classList.remove('hlcur'); }); hits[k].classList.add('hlcur'); });
+    $('#hldone').addEventListener('click', function () { mem.progDone = mem.progDone || {}; if (mem.progDone[key]) delete mem.progDone[key]; else mem.progDone[key] = today(); save(); this.textContent = mem.progDone[key] ? 'Extrait fait ✓' : 'Extrait fait'; this.classList.toggle('primary', !mem.progDone[key]); this.classList.toggle('on', !!mem.progDone[key]); });
+    return target || (hits[0] || null);
+  }
+
+  /* ------------------------------------------------------------------ routeur */
+  function parseRoute() {
+    var h = location.hash.replace(/^#\/?/, ''), q = '', i = h.indexOf('?');
+    if (i >= 0) { q = h.slice(i + 1); h = h.slice(0, i); }
+    var parts = h.split('/'), params = {};
+    q.split('&').forEach(function (kv) { if (!kv) return; var p = kv.split('='); params[decodeURIComponent(p[0])] = decodeURIComponent(p[1] || ''); });
+    return { name: parts[0] || '', arg: parts[1], params: params };
+  }
+  function route() {
+    var r = parseRoute();
+    app.classList.remove('menu');
+    if (r.name !== 'revision') session = null;
+    if (r.name !== 'chiffres') drill = null;
+    if (r.name !== 'qcm') quiz = null;
+    if (r.name !== 'sujet') clearInterval(sujTimer);
+    switch (r.name) {
+      case 'fiche': pageFiche(r.arg, r.params.ancre, r.params); break;
+      case 'programme': pageProgramme(r.arg); break;
+      case 'theme': pageTheme(r.arg); break;
+      case 'revision': pageRevision(r.params); break;
+      case 'chiffres': pageChiffres(r.params); break;
+      case 'recherche': pageSearch(r.params.q); break;
+      case 'a-verifier': pageVerif(r.params); break;
+      case 'qcm': pageQcm(r.params); break;
+      case 'examen': pageExamen(r.params); break;
+      case 'sujets': pageSujets(r.params); break;
+      case 'sujet': pageSujet(r.arg, r.params); break;
+      case 'erreurs': pageErreurs(); break;
+      case 'stats': pageStats(); break;
+      case 'pdf': pagePdf(); break;
+      case 'planning': pagePlanning(); break;
+      case 'donnees': pageData(); break;
+      default: pageToday();
+    }
+    renderSide(r);
+    var titles = { fiche: r.arg && F[r.arg] ? F[r.arg].title : '', revision: 'Révision', chiffres: 'Chiffres', recherche: 'Recherche', 'a-verifier': 'À vérifier', planning: 'Planning', donnees: 'Réglages', qcm: 'QCM', examen: 'Examen blanc', sujets: 'Sujets rédactionnels', sujet: 'Sujet', erreurs: 'Carnet d’erreurs', stats: 'Statistiques', pdf: 'PDF', programme: 'Programme' };
+    document.title = (titles[r.name] ? titles[r.name] + ' – ' : '') + 'Révision DEMS';
+    if (r.name !== 'fiche' && r.name !== 'revision' && r.name !== 'chiffres') window.scrollTo(0, 0);
+  }
+
+  /* ------------------------------------------------------------------ démarrage */
+  load(); setTheme();
+  window.addEventListener('hashchange', route);
+  var sform = $('#sform'), sinput = $('#q');
+  sform.addEventListener('submit', function (e) { e.preventDefault(); location.hash = '#/recherche?q=' + encodeURIComponent(sinput.value); });
+  $('#bmenu').addEventListener('click', function () { app.classList.toggle('menu'); });
+  document.addEventListener('keydown', function (e) {
+    if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+    var r = parseRoute();
+    if (r.name === 'revision' && session) {
+      if (e.key === ' ' && !session.shown) { e.preventDefault(); show(); }
+      else if (session.shown && /^[1-4]$/.test(e.key)) grade(+e.key);
+    } else if (r.name === 'chiffres' && drill && drill.i < drill.list.length) {
+      if (drill.mode === 'qcm') {
+        var kz = 'abcd'.indexOf(e.key.toLowerCase()); if (kz < 0 && /^[1-4]$/.test(e.key)) kz = +e.key - 1;
+        if (!drill.shown && kz >= 0) zpick(kz, r.params);
+        else if (drill.shown && e.key === 'Enter') { e.preventDefault(); drill.i++; drill.shown = false; drill.pick = null; pageChiffres(r.params); }
+      }
+      else if (e.key === ' ' && !drill.shown) { e.preventDefault(); drill.shown = true; pageChiffres(r.params); }
+      else if (drill.shown && (e.key === '1' || e.key === '2')) zgrade(e.key === '2' ? 1 : 0, r.params);
+    } else if (r.name === 'qcm' && quiz && quiz.q && quiz.i < quiz.list.length) {
+      var ki = 'abcde'.indexOf(e.key.toLowerCase()); if (ki < 0 && /^[1-5]$/.test(e.key)) ki = +e.key - 1;
+      if (e.key === 'Enter') { e.preventDefault(); if (quiz.checked) quizNext(); else quizCheck(); }
+      else if (ki >= 0 && !quiz.checked && ki < quiz.q.choix.length) { var b = $('button.opt[data-o="' + ki + '"]'); if (b) b.click(); }
+    } else if (r.name === 'examen' && exam && !exam.done && r.params.go) {
+      var kj = 'abcde'.indexOf(e.key.toLowerCase()); if (kj < 0 && /^[1-5]$/.test(e.key)) kj = +e.key - 1;
+      if (e.key === 'Enter') { e.preventDefault(); examNext(); }
+      else if (kj >= 0) { var b2 = $('button.opt[data-o="' + kj + '"]'); if (b2) b2.click(); }
+    } else if (e.key === '/') { e.preventDefault(); sinput.focus(); }
+  });
+  if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { lutRGB = null; route(); });
+  renderPomo();
+  route();
+})();
