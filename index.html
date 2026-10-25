@@ -19,17 +19,18 @@
   </symbol>
 </svg>
 <div class="app" id="app">
-  <header class="topbar"><a href="#/"><svg class="mark"><use href="#mark"/></svg>Révision DEMS</a><button class="btn" id="bmenu" aria-label="Ouvrir le menu">Menu</button></header>
+  <header class="topbar"><a href="#/"><svg class="mark"><use href="#mark"/></svg>Révision DEMS</a><a class="ini topwho" id="topwho" href="#/donnees" hidden></a><button class="btn" id="bmenu" aria-label="Ouvrir le menu">Menu</button></header>
   <aside class="side" aria-label="Navigation">
     <div class="brand"><a href="#/"><svg class="mark"><use href="#mark"/></svg>Révision DEMS</a><span class="exam num" id="examline"></span></div>
     <form class="search" id="sform" role="search"><input id="q" type="search" placeholder="Rechercher dans les fiches" aria-label="Rechercher dans les fiches"></form>
     <nav class="nav" id="nav"></nav>
     <div class="tree" id="tree"></div>
-    <div class="side-foot"><span id="pomo"></span><span>Touche / pour chercher</span></div>
+    <div class="side-foot"><div class="whoami" id="whoami" hidden></div><div class="foot2"><span id="pomo"></span><span>Touche / pour chercher</span></div></div>
   </aside>
   <main class="main" id="main"></main>
   <aside class="scans" id="scans" role="dialog" aria-modal="false" aria-label="Pages manuscrites d’origine" hidden></aside>
 </div>
+<main class="auth" id="auth" hidden aria-label="Connexion"></main>
 <script src="fichiers/donnees.js"></script>
 <script src="fichiers/app.js"></script>
 </body>

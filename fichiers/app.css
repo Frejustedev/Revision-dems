@@ -492,3 +492,42 @@ article.fiche .hlcur{outline:2px solid var(--amber-line); outline-offset:2px}
 @media (max-width:700px){ .prog .phead{flex-direction:column} .progbar{top:56px} }
 .prog .phead>a{white-space:nowrap}
 .list .it a{text-decoration:none} .list .it a:hover{text-decoration:underline}
+
+/* ---------- profils : connexion et inscription ---------- */
+body.locked .app{display:none}
+.auth{min-height:100vh; display:flex; justify-content:center; align-items:flex-start; padding:9vh 16px 48px;
+  background-color:var(--bg); background-image:linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px); background-size:22px 22px; background-position:-1px -1px}
+.auth[hidden]{display:none}
+/* la carte rappelle l'étiquette collée sur la couverture d'un cahier : double filet */
+.auth-card{width:min(470px,100%); background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:30px 34px 22px;
+  box-shadow:inset 0 0 0 6px var(--surface), inset 0 0 0 7px var(--line-2), 0 18px 40px -30px rgba(27,36,64,.45)}
+.auth-brand{display:flex; align-items:center; gap:10px; margin-bottom:26px}
+.auth-brand b{font-weight:800; font-size:1.05rem}
+.auth-brand .exam{margin-left:auto; font-size:.8rem; font-weight:700; color:var(--red); border:1.5px solid currentColor; border-radius:999px; padding:1px 8px}
+.auth h1{font-size:1.75rem; line-height:1.15; letter-spacing:-.02em; margin:0 0 6px; font-weight:800}
+.auth .lede{margin:0 0 20px; font-size:.95rem}
+ul.who{list-style:none; margin:0 0 18px; padding:0; display:flex; flex-direction:column; gap:8px}
+ul.who button{width:100%; display:flex; align-items:center; gap:12px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--surface); cursor:pointer; text-align:left; color:var(--ink)}
+ul.who button:hover{border-color:var(--teal)} ul.who button:hover b{color:var(--teal)}
+ul.who b{display:block; font-size:1rem} ul.who small{color:var(--muted); font-size:.82rem}
+.ini{flex:none; width:36px; height:36px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:var(--teal-soft); color:var(--teal); font-weight:800; font-size:.86rem; letter-spacing:.02em}
+.aform .field{margin:0 0 14px}
+.aform .field small{margin-top:2px}
+.aform .field.check{padding-top:0; align-items:flex-start; font-size:.9rem; line-height:1.4}
+.aform .field.check input{margin-top:3px}
+.aform .row{margin-top:6px}
+.amsg{min-height:1.2em; margin:12px 0 0; color:var(--rose); font-weight:600; font-size:.9rem}
+.amsg:empty{margin:0}
+.anote{margin:16px 0 0; padding-top:12px; border-top:1px dashed var(--line)}
+.side-foot{flex-direction:column; align-items:stretch; gap:10px}
+.side-foot .foot2{display:flex; justify-content:space-between; gap:8px; align-items:center}
+.whoami{display:flex; align-items:center; gap:9px; font-size:.86rem; color:var(--ink)}
+.whoami[hidden]{display:none}
+.whoami .ini{width:28px; height:28px; font-size:.72rem}
+.whoami .nm{font-weight:700; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.whoami .linkbtn{font-size:.8rem; white-space:nowrap}
+@media (max-width:520px){ .auth{padding-top:24px} .auth-card{padding:24px 20px 18px} }
+
+.side-foot{position:sticky; bottom:0; background:var(--surface)}
+.topwho{display:none; text-decoration:none; width:32px; height:32px; font-size:.78rem}
+@media (max-width:900px){ .topwho:not([hidden]){display:inline-flex; margin-left:auto} .topwho:not([hidden]) + .btn{margin-left:8px} }

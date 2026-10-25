@@ -20,15 +20,52 @@
   function blank() {
     return { v: 1, exam: EXAM, examSet: false, start: today(), fiches: {}, cards: {}, clozes: {}, chks: {}, devs: {}, log: {}, qcm: {}, sujets: {}, exams: [], theme: 'auto' };
   }
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { canStore = false; return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { canStore = false; return false; } }
+  function lsDel(k) { try { localStorage.removeItem(k); } catch (e) { /* rien */ } }
+  function memKey(id) { id = id === undefined ? (me && me.id) : id; return id ? KEY + ':' + id : KEY; }
+  function normMem(o) {
+    var m = Object.assign(blank(), o || {});
+    if (!m.examSet) m.exam = EXAM; // date officielle tant qu'elle n'a pas été modifiée à la main
+    ['fiches', 'cards', 'clozes', 'chks', 'devs', 'log', 'qcm', 'sujets'].forEach(function (k) { m[k] = m[k] || {}; }); m.exams = m.exams || [];
+    return m;
+  }
   function load() {
     var s = null;
-    try { s = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { canStore = false; }
-    mem = Object.assign(blank(), s || {});
-    if (!mem.examSet) mem.exam = EXAM; // date officielle tant qu'elle n'a pas été modifiée à la main
-    ['fiches', 'cards', 'clozes', 'chks', 'devs', 'log', 'qcm', 'sujets'].forEach(function (k) { mem[k] = mem[k] || {}; }); mem.exams = mem.exams || [];
+    try { s = JSON.parse(lsGet(memKey()) || 'null'); } catch (e) { s = null; }
+    mem = normMem(s);
   }
   function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(mem)); } catch (e) { canStore = false; }
+    mem.savedAt = Date.now();
+    lsSet(memKey(), JSON.stringify(mem));
+    if (me && me.last !== today()) { me.last = today(); saveProfils(); }
+  }
+
+  /* ------------------------------------------------------------------ profils : comptes personnels gardés sur cet appareil (aucun serveur) */
+  var PKEY = 'revision-dems-profils', profils = { v: 1, list: [], current: null }, me = null;
+  function loadProfils() {
+    var o = null; try { o = JSON.parse(lsGet(PKEY) || 'null'); } catch (e) { o = null; }
+    profils = o && o.list ? o : { v: 1, list: [], current: null };
+  }
+  function saveProfils() { lsSet(PKEY, JSON.stringify(profils)); }
+  function profById(id) { for (var i = 0; i < profils.list.length; i++) if (profils.list[i].id === id) return profils.list[i]; return null; }
+  function profByName(n) { n = normalize(n.trim()); for (var i = 0; i < profils.list.length; i++) if (normalize(profils.list[i].nom) === n) return profils.list[i]; return null; }
+  function initials(n) { var w = n.trim().split(/\s+/); return ((w[0] || '?').charAt(0) + (w.length > 1 ? w[w.length - 1].charAt(0) : '')).toUpperCase(); }
+  function rndHex(n) { var a = new Uint8Array(n); (window.crypto || {}).getRandomValues ? crypto.getRandomValues(a) : a.forEach(function (_, i) { a[i] = Math.floor(Math.random() * 256); }); return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join(''); }
+  function hashPwd(salt, pwd) {
+    var txt = salt + ':' + pwd;
+    if (window.crypto && crypto.subtle && window.TextEncoder) {
+      return crypto.subtle.digest('SHA-256', new TextEncoder().encode(txt)).then(function (b) { return 'sha256:' + Array.prototype.map.call(new Uint8Array(b), function (x) { return ('0' + x.toString(16)).slice(-2); }).join(''); });
+    }
+    var h1 = 0x811c9dc5, h2 = 0x01000193; // repli sans WebCrypto (page ouverte hors contexte sécurisé)
+    for (var i = 0; i < txt.length; i++) { h1 = Math.imul(h1 ^ txt.charCodeAt(i), 16777619) >>> 0; h2 = Math.imul(h2 ^ txt.charCodeAt(i), 2246822519) >>> 0; }
+    return Promise.resolve('fnv:' + h1.toString(16) + h2.toString(16));
+  }
+  function legacyInfo() { // progression enregistrée avant les profils (une seule par navigateur)
+    var o = null; try { o = JSON.parse(lsGet(KEY) || 'null'); } catch (e) { o = null; }
+    if (!o) return null;
+    var nf = Object.keys(o.fiches || {}).filter(function (f) { return (o.fiches[f] || {}).learned; }).length, nq = Object.keys(o.qcm || {}).length, nc = Object.keys(o.cards || {}).length;
+    return nf || nq || nc ? { mem: o, txt: plural(nf, 'fiche apprise', 'fiches apprises') + ', ' + plural(nq, 'QCM fait', 'QCM faits') } : null;
   }
 
   /* ------------------------------------------------------------------ dates */
@@ -173,6 +210,9 @@
     }).join('');
     var d = diff(today(), mem.exam);
     $('#examline').textContent = d >= 0 ? 'J−' + d : 'examen passé';
+    var tw = $('#topwho'); if (tw) { tw.hidden = !me; if (me) { tw.textContent = initials(me.nom); tw.title = me.nom + ' : mon profil'; } }
+    var wb = $('#whoami');
+    if (wb) { wb.hidden = !me; if (me) { wb.innerHTML = '<span class="ini">' + esc(initials(me.nom)) + '</span><span class="nm">' + esc(me.nom) + '</span><button class="linkbtn" id="bout">Se déconnecter</button>'; $('#bout').onclick = logout; } }
     var on = $('#tree a.f.on'); if (on && on.scrollIntoViewIfNeeded) on.scrollIntoViewIfNeeded(); else if (on) on.scrollIntoView({ block: 'nearest' });
   }
 
@@ -247,7 +287,7 @@
       '<li><b>Réciter</b> : activez le mode plan, récitez chaque partie de tête, cliquez sur le titre pour vérifier.</li>' +
       '<li><b>Valider</b> : cliquez sur « J’ai appris cette fiche ». Ses questions entrent dans la révision espacée et des relectures sont prévues à J+1, J+7 et J+21.</li>' +
       '<li><b>Réviser chaque jour</b> : faites les questions arrivées à échéance et 10 minutes de chiffres. La carte de fixation chauffe à mesure que vous maîtrisez.</li>' +
-      '<li><b>Sauvegarder</b> : exportez votre progression de temps en temps (Réglages et sauvegarde).</li></ol></details>';
+      '<li><b>Sauvegarder et changer d’appareil</b> : chaque collègue a son profil sur l’appareil où il l’a créé. « Transférer mon profil » (Réglages et sauvegarde) crée un fichier à importer sur un autre appareil ; gardez-en une copie de temps en temps.</li></ol></details>';
     if (!canStore) h += '<p class="nb">Ce navigateur bloque l’enregistrement local : votre progression sera perdue à la fermeture. Ouvrez le site avec Chrome, Edge ou Firefox.</p>';
     h += '</div>';
     main.innerHTML = h;
@@ -593,23 +633,42 @@
   /* ------------------------------------------------------------------ page : réglages et sauvegarde */
   function pageData() {
     var h = '<div class="page"><h1 class="title">Réglages et sauvegarde</h1>';
-    h += '<p class="lede">Votre progression est enregistrée dans ce navigateur, sur cet ordinateur. Exportez‑la régulièrement : un nettoyage du navigateur l’effacerait.</p>';
-    h += '<h2 class="sec">Sauvegarde</h2><div class="row"><button class="btn primary" id="bexp">Exporter ma progression</button><label class="btn" for="fimp">Importer une sauvegarde</label><input type="file" id="fimp" accept=".json,application/json" hidden></div><p class="small muted" id="msg"></p>';
+    h += '<p class="lede">' + (me ? 'Profil de <b>' + esc(me.nom) + '</b>. ' : '') + 'Votre progression est enregistrée dans ce navigateur, sur cet appareil. Exportez‑la régulièrement : un nettoyage du navigateur l’effacerait.</p>';
+    h += '<h2 class="sec">Sauvegarde et transfert</h2><p class="small muted">Le fichier contient votre profil et toute votre progression. Sur un autre appareil, ouvrez le site puis « Importer un profil » sur l’écran de connexion : vous vous connecterez avec le même mot de passe. Si le profil existe déjà là-bas, la version la plus récente est gardée.</p>';
+    h += '<div class="row"><button class="btn primary" id="bexp">' + (me ? 'Transférer mon profil (fichier)' : 'Exporter ma progression') + '</button><label class="btn" for="fimp">Importer une sauvegarde dans ce profil</label><input type="file" id="fimp" accept=".json,application/json" hidden></div><p class="small muted" id="msg"></p>';
+    if (me) h += '<h2 class="sec">Mon profil</h2><form class="row" id="fpwd" style="align-items:flex-end"><label class="field" style="margin:0"><b>Mot de passe actuel</b><input class="field-in" type="password" id="pw0" autocomplete="current-password" required></label><label class="field" style="margin:0"><b>Nouveau mot de passe</b><input class="field-in" type="password" id="pw1" autocomplete="new-password" minlength="4" required></label><button class="btn" type="submit">Changer le mot de passe</button></form><p class="small muted" id="pmsg"></p>' +
+      '<div class="row"><button class="btn" id="blogout">Se déconnecter</button><button class="btn" id="bdelp">Supprimer ce profil de cet appareil</button></div>';
     h += '<h2 class="sec">Affichage</h2><div class="row">' + [['auto', 'Automatique'], ['light', 'Clair'], ['dark', 'Sombre']].map(function (o) { return '<button class="btn' + (mem.theme === o[0] ? ' on' : '') + '" data-th="' + o[0] + '">' + o[1] + '</button>'; }).join('') + '</div>';
-    h += '<h2 class="sec">Repartir de zéro</h2><p class="small muted">Efface toute la progression de ce navigateur (fiches apprises, révisions, notes).</p><button class="btn" id="breset">Tout effacer</button>';
+    h += '<h2 class="sec">Repartir de zéro</h2><p class="small muted">Efface toute la progression ' + (me ? 'de ce profil' : 'de ce navigateur') + ' (fiches apprises, révisions, notes).</p><button class="btn" id="breset">Tout effacer</button>';
     h += '<h2 class="sec">À propos des fiches</h2><p class="small">' + ORDER.length + ' fiches, ' + D.cards.length + ' questions, ' + D.clozes.length + ' phrases à trous sur les chiffres, ' + D.chks.length + ' valeurs à vérifier, ' + D.devs.length + ' lectures déduites. Contenu retranscrit de vos résumés manuscrits.</p>';
     main.innerHTML = h + '</div>';
     $('#bexp').addEventListener('click', function () {
-      var blob = new Blob([JSON.stringify(mem, null, 1)], { type: 'application/json' }), a = document.createElement('a');
-      a.href = URL.createObjectURL(blob); a.download = 'progression-revision-dems-' + today() + '.json'; document.body.appendChild(a); a.click(); a.remove();
-      $('#msg').textContent = 'Fichier de sauvegarde téléchargé.';
+      var blob = new Blob([JSON.stringify(me ? profilFile() : mem)], { type: 'application/json' }), a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = (me ? 'profil-' + normalize(me.nom).replace(/[^a-z0-9]+/g, '-') : 'progression') + '-revision-dems-' + today() + '.json'; document.body.appendChild(a); a.click(); a.remove();
+      $('#msg').textContent = me ? 'Fichier du profil téléchargé. Sur l’autre appareil : écran de connexion, « Importer un profil ».' : 'Fichier de sauvegarde téléchargé.';
     });
     $('#fimp').addEventListener('change', function () {
       var file = this.files[0]; if (!file) return; var r = new FileReader();
-      r.onload = function () { try { var o = JSON.parse(r.result); if (!o || o.v !== 1) throw 0; mem = Object.assign(blank(), o); save(); setTheme(); $('#msg').textContent = 'Sauvegarde importée.'; route(); } catch (e) { $('#msg').textContent = 'Ce fichier n’est pas une sauvegarde valide de Révision DEMS.'; } };
+      r.onload = function () { try { var o = JSON.parse(r.result); if (o && o.type === 'revision-dems-profil') o = o.mem; if (!o || o.v !== 1) throw 0; mem = normMem(o); save(); setTheme(); $('#msg').textContent = 'Sauvegarde importée.'; route(); } catch (e) { $('#msg').textContent = 'Ce fichier n’est pas une sauvegarde valide de Révision DEMS.'; } };
       r.readAsText(file);
     });
     $$('[data-th]').forEach(function (b) { b.addEventListener('click', function () { mem.theme = b.dataset.th; save(); setTheme(); route(); }); });
+    if (me) {
+      $('#fpwd').addEventListener('submit', function (e) {
+        e.preventDefault(); var pm = $('#pmsg'), n1 = $('#pw1').value;
+        hashPwd(me.salt, $('#pw0').value).then(function (hh) {
+          if (hh !== me.hash) { pm.textContent = 'Le mot de passe actuel est incorrect.'; return; }
+          if (n1.length < 4) { pm.textContent = 'Le nouveau mot de passe doit faire 4 caractères au moins.'; return; }
+          me.salt = rndHex(12); hashPwd(me.salt, n1).then(function (h2) { me.hash = h2; saveProfils(); pm.textContent = 'Mot de passe changé.'; $('#fpwd').reset(); });
+        });
+      });
+      $('#blogout').addEventListener('click', logout);
+      var armedP = false;
+      $('#bdelp').addEventListener('click', function () {
+        if (!armedP) { armedP = true; this.textContent = 'Confirmer : supprimer « ' + me.nom + ' » et sa progression'; this.classList.add('primary'); return; }
+        lsDel(memKey()); profils.list = profils.list.filter(function (x) { return x.id !== me.id; }); profils.current = null; saveProfils(); mem = null; location.hash = '#/'; location.reload();
+      });
+    }
     var armed = false;
     $('#breset').addEventListener('click', function () {
       if (!armed) { armed = true; this.textContent = 'Confirmer : tout effacer'; this.classList.add('primary'); return; }
@@ -923,7 +982,7 @@
   function pageStats() {
     var learned = learnedFiches().length, qdone = Object.keys(mem.qcm).filter(function (id) { return QCM[id]; }), qok = qdone.filter(function (id) { return mem.qcm[id].lastOk; }).length;
     var solid = Object.keys(mem.cards).filter(function (c) { return CARD[c] && mem.cards[c].int >= 21; }).length;
-    var h = '<div class="page wide"><h1 class="title">Statistiques</h1>';
+    var h = '<div class="page wide"><h1 class="title">Statistiques</h1>' + (me ? '<p class="lede">Profil de ' + esc(me.nom) + '</p>' : '');
     h += '<div class="kpis"><div><b>' + learned + '</b><span>/ ' + ORDER.length + ' fiches apprises</span></div><div><b>' + qdone.length + '</b><span>/ ' + D.qcm.length + ' QCM faits</span></div><div><b>' + (qdone.length ? Math.round(100 * qok / qdone.length) + ' %' : '–') + '</b><span>de réussite aux QCM</span></div><div><b>' + solid + '</b><span>questions solides</span></div><div><b>' + (mem.exams || []).length + '</b><span>examens blancs</span></div></div>';
     // activité 21 jours (SVG)
     var days = []; for (var i = 20; i >= 0; i--) days.push(addDays(today(), -i));
@@ -1238,13 +1297,124 @@
     if (r.name !== 'fiche' && r.name !== 'revision' && r.name !== 'chiffres') window.scrollTo(0, 0);
   }
 
+
+  /* ------------------------------------------------------------------ écran de connexion et d'inscription */
+  var authBox = $('#auth');
+  function lastTxt(pr) { return pr.last ? (pr.last === today() ? 'dernière séance aujourd’hui' : 'dernière séance le ' + fdate(pr.last).replace(/\.$/, '')) : 'jamais ouvert'; }
+  function showAuth(mode, arg, msg) {
+    document.body.classList.add('locked'); authBox.hidden = false;
+    var h = '<div class="auth-card"><div class="auth-brand"><svg class="mark"><use href="#mark"/></svg><b>Révision DEMS</b><span class="exam num">J−' + Math.max(0, diff(today(), EXAM)) + '</span></div>';
+    mode = mode || (profils.list.length ? 'choose' : 'create');
+    if (mode === 'choose') {
+      h += '<h1>Qui révise ?</h1><p class="lede">Chaque profil garde ses fiches apprises, ses QCM, son carnet d’erreurs et ses statistiques.</p><ul class="who">' +
+        profils.list.slice().sort(function (a, b) { return (b.last || '') < (a.last || '') ? -1 : 1; }).map(function (pr) {
+          return '<li><button data-id="' + pr.id + '"><span class="ini">' + esc(initials(pr.nom)) + '</span><span><b>' + esc(pr.nom) + '</b><small>' + lastTxt(pr) + '</small></span></button></li>';
+        }).join('') + '</ul><div class="row"><button class="btn" id="anew">Créer un profil</button><label class="btn" for="aimp">Importer un profil</label><input type="file" id="aimp" accept=".json,application/json" hidden></div>';
+    } else if (mode === 'login') {
+      var pr = profById(arg);
+      h += '<h1>Bonjour, ' + esc(pr.nom.split(/\s+/)[0]) + '</h1><p class="lede">' + esc(pr.nom) + ', ' + lastTxt(pr) + '.</p>' +
+        '<form id="aform" class="aform" autocomplete="on"><input type="text" name="username" value="' + esc(pr.nom) + '" autocomplete="username" hidden>' +
+        '<label class="field"><b>Mot de passe</b><input class="field-in" type="password" id="apwd" autocomplete="current-password" required></label>' +
+        '<div class="row"><button class="btn primary" type="submit">Se connecter</button><button class="btn" type="button" id="aback">Ce n’est pas moi</button><button class="linkbtn" type="button" id="aforgot">Mot de passe oublié ?</button></div></form>';
+    } else if (mode === 'create') {
+      var leg = legacyInfo();
+      h += '<h1>' + (profils.list.length ? 'Nouveau profil' : 'Créez votre profil') + '</h1><p class="lede">Votre progression (fiches apprises, QCM, erreurs, statistiques) sera rangée sous votre nom.</p>' +
+        '<form id="aform" class="aform" autocomplete="on">' +
+        '<label class="field"><b>Votre nom</b><input class="field-in" id="anom" maxlength="40" autocomplete="username" placeholder="Prénom et nom" required></label>' +
+        '<label class="field"><b>Mot de passe</b><input class="field-in" type="password" id="apwd" autocomplete="new-password" minlength="4" required><small class="muted">4 caractères au moins.</small></label>' +
+        '<label class="field"><b>Confirmez le mot de passe</b><input class="field-in" type="password" id="apwd2" autocomplete="new-password" required></label>' +
+        (leg ? '<label class="field check"><input type="checkbox" id="aleg"' + (profils.list.length ? '' : ' checked') + '> Reprendre la progression déjà enregistrée sur cet appareil (' + leg.txt + ')</label>' : '') +
+        '<div class="row"><button class="btn primary" type="submit">Créer mon profil</button>' + (profils.list.length ? '<button class="btn" type="button" id="aback">Retour</button>' : '<label class="btn" for="aimp">Importer un profil</label><input type="file" id="aimp" accept=".json,application/json" hidden>') + '</div></form>';
+    } else if (mode === 'forgot') {
+      var pf = profById(arg);
+      h += '<h1>Nouveau mot de passe</h1><p class="lede">Les profils sont rangés sur cet appareil, sans serveur : aucun courriel ne peut être envoyé. Pour choisir un nouveau mot de passe, tapez le nom du profil exactement comme il est écrit.</p>' +
+        '<form id="aform" class="aform"><label class="field"><b>Nom du profil</b><input class="field-in" id="anom" required></label>' +
+        '<label class="field"><b>Nouveau mot de passe</b><input class="field-in" type="password" id="apwd" autocomplete="new-password" minlength="4" required></label>' +
+        '<div class="row"><button class="btn primary" type="submit">Enregistrer et me connecter</button><button class="btn" type="button" id="aback">Retour</button></div></form>';
+      arg = pf.id;
+    }
+    h += '<p class="amsg" id="amsg" role="status">' + (msg ? esc(msg) : '') + '</p>';
+    h += '<p class="small muted anote">Les profils sont enregistrés dans ce navigateur, sur cet appareil. Pour continuer sur un autre appareil, utilisez « Transférer mon profil » dans Réglages et sauvegarde.</p></div>';
+    authBox.innerHTML = h;
+    var am = $('#amsg'), say = function (t) { am.textContent = t; };
+    $$('.who button', authBox).forEach(function (b) { b.addEventListener('click', function () { showAuth('login', b.dataset.id); }); });
+    var bn = $('#anew'); if (bn) bn.addEventListener('click', function () { showAuth('create'); });
+    var bb = $('#aback'); if (bb) bb.addEventListener('click', function () { showAuth('choose'); });
+    var bf = $('#aforgot'); if (bf) bf.addEventListener('click', function () { showAuth('forgot', arg); });
+    var fi = $('#aimp'); if (fi) fi.addEventListener('change', function () { importProfil(this.files[0], function (t, id) { showAuth(id ? 'login' : profils.list.length ? 'choose' : 'create', id, t); }); });
+    var fm = $('#aform');
+    if (fm) fm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (mode === 'login') {
+        var pr = profById(arg);
+        hashPwd(pr.salt, $('#apwd').value).then(function (hh) { if (hh !== pr.hash) { say('Mot de passe incorrect.'); $('#apwd').select(); return; } enter(pr); });
+      } else if (mode === 'create') {
+        var nom = $('#anom').value.trim().replace(/\s+/g, ' '), p1 = $('#apwd').value, p2 = $('#apwd2').value;
+        if (nom.length < 2) return say('Indiquez votre nom.');
+        if (profByName(nom)) return say('Un profil porte déjà ce nom sur cet appareil. Choisissez-le dans la liste, ou ajoutez votre initiale.');
+        if (p1.length < 4) return say('Le mot de passe doit faire 4 caractères au moins.');
+        if (p1 !== p2) return say('Les deux mots de passe sont différents.');
+        var pr2 = { id: 'p' + rndHex(6), nom: nom, salt: rndHex(12), created: today(), last: today() };
+        hashPwd(pr2.salt, p1).then(function (hh) {
+          pr2.hash = hh;
+          var leg = legacyInfo(), take = leg && $('#aleg') && $('#aleg').checked;
+          if (!lsSet(memKey(pr2.id), JSON.stringify(take ? leg.mem : blank()))) return say('Ce navigateur refuse l’enregistrement : libérez de la place ou utilisez Chrome, Edge ou Firefox.');
+          if (take) lsDel(KEY);
+          profils.list.push(pr2); saveProfils(); enter(pr2);
+        });
+      } else if (mode === 'forgot') {
+        var pf = profById(arg), p3 = $('#apwd').value;
+        if (normalize($('#anom').value.trim().replace(/\s+/g, ' ')) !== normalize(pf.nom)) return say('Ce n’est pas le nom exact du profil.');
+        if (p3.length < 4) return say('Le mot de passe doit faire 4 caractères au moins.');
+        pf.salt = rndHex(12); hashPwd(pf.salt, p3).then(function (hh) { pf.hash = hh; saveProfils(); enter(pf); });
+      }
+    });
+    var first = $('input:not([hidden]):not([type=file])', authBox) || $('.who button', authBox); if (first) first.focus();
+  }
+  function enter(pr) {
+    me = pr; profils.current = pr.id; me.last = today(); saveProfils();
+    document.body.classList.remove('locked'); authBox.hidden = true; authBox.innerHTML = '';
+    boot();
+  }
+  function logout() { if (mem) save(); profils.current = null; saveProfils(); location.hash = '#/'; location.reload(); }
+  function profilFile() { return { type: 'revision-dems-profil', v: 1, profil: { id: me.id, nom: me.nom, salt: me.salt, hash: me.hash, created: me.created }, mem: mem }; }
+  // importe un fichier « profil » (ou une ancienne sauvegarde) ; garde la version la plus récente si le profil existe déjà ici
+  function importProfil(file, done) {
+    if (!file) return; var r = new FileReader();
+    r.onload = function () {
+      var o = null; try { o = JSON.parse(r.result); } catch (e) { o = null; }
+      if (!o || o.type !== 'revision-dems-profil' || !o.profil || !o.mem) return done(o && o.v === 1 ? 'Ce fichier est une ancienne sauvegarde sans profil : créez d’abord votre profil, puis importez-le dans Réglages et sauvegarde.' : 'Ce fichier n’est pas un profil de Révision DEMS.');
+      var pr = profById(o.profil.id), msg;
+      if (pr) {
+        var cur = null; try { cur = JSON.parse(lsGet(memKey(pr.id)) || 'null'); } catch (e) { cur = null; }
+        if (cur && (cur.savedAt || 0) > (o.mem.savedAt || 0)) msg = 'Ce profil existe déjà ici avec une progression plus récente : elle a été gardée.';
+        else { lsSet(memKey(pr.id), JSON.stringify(o.mem)); msg = 'Progression du profil mise à jour avec le fichier.'; }
+        pr.salt = o.profil.salt; pr.hash = o.profil.hash;
+      } else {
+        if (profByName(o.profil.nom)) return done('Un autre profil porte déjà le nom « ' + o.profil.nom + ' » sur cet appareil.');
+        pr = { id: o.profil.id, nom: o.profil.nom, salt: o.profil.salt, hash: o.profil.hash, created: o.profil.created || today(), last: today() };
+        if (!lsSet(memKey(pr.id), JSON.stringify(o.mem))) return done('Ce navigateur refuse l’enregistrement.');
+        profils.list.push(pr); msg = 'Profil importé. Connectez-vous avec le mot de passe habituel.';
+      }
+      saveProfils(); done(msg, pr.id);
+    };
+    r.readAsText(file);
+  }
+
   /* ------------------------------------------------------------------ démarrage */
-  load(); setTheme();
-  window.addEventListener('hashchange', route);
+  function locked() { return document.body.classList.contains('locked'); }
+  var booted = false;
+  function boot() {
+    load(); setTheme();
+    if (!booted) { booted = true; renderPomo(); }
+    route();
+  }
+  window.addEventListener('hashchange', function () { if (!locked()) route(); });
   var sform = $('#sform'), sinput = $('#q');
   sform.addEventListener('submit', function (e) { e.preventDefault(); location.hash = '#/recherche?q=' + encodeURIComponent(sinput.value); });
   $('#bmenu').addEventListener('click', function () { app.classList.toggle('menu'); });
   document.addEventListener('keydown', function (e) {
+    if (locked()) return;
     if (e.key === 'Escape' && scanFid) { closeScans(); return; }
     if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
     var r = parseRoute();
@@ -1269,7 +1439,9 @@
       else if (kj >= 0) { var b2 = $('button.opt[data-o="' + kj + '"]'); if (b2) b2.click(); }
     } else if (e.key === '/') { e.preventDefault(); sinput.focus(); }
   });
-  if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { lutRGB = null; route(); });
-  renderPomo();
-  route();
+  if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { lutRGB = null; if (!locked()) route(); });
+  loadProfils();
+  if (!canStore) boot(); // stockage bloqué : pas de profils possibles, avertissement sur la page d'accueil
+  else if (profils.current && profById(profils.current)) { me = profById(profils.current); boot(); }
+  else showAuth();
 })();
