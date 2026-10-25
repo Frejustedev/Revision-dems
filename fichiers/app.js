@@ -270,10 +270,10 @@
     var from = mem.start && mem.start < t ? (diff(mem.start, t) > 14 ? addDays(t, -14) : mem.start) : t;
     from = addDays(from, -((parse(from).getDay() + 6) % 7));
     var to = addDays(e, (7 - parse(e).getDay()) % 7);
-    var pdays = {}, pname = '';
+    var pdays = {}, pnames = [];
     progs().forEach(function (p) {
-      if (progEnd(p) < t) return;
-      if (!pname) pname = p.court || p.titre;
+      if (progEnd(p) < t || p.debut > e) return;
+      pnames.push(p.court || p.titre);
       p.jours.forEach(function (j, i) { pdays[progDate(p, i)] = (p.court || p.titre) + ', jour ' + (i + 1) + ' : ' + j.titre; });
     });
     var h = '<div><div class="cal" aria-hidden="true"><span></span>' + ['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(function (x) { return '<span class="wd">' + x + '</span>'; }).join('');
@@ -295,7 +295,7 @@
         h += '<span class="' + cls.join(' ') + '" title="' + esc(tip) + '">' + parse(day).getDate() + '</span>';
       }
     }
-    h += '</div><div class="callegend"><span><i class="k-now"></i>aujourd’hui</span>' + (pname ? '<span><i class="k-prog"></i>' + esc(pname) + '</span>' : '') +
+    h += '</div><div class="callegend"><span><i class="k-now"></i>aujourd’hui</span>' + (pnames.length ? '<span><i class="k-prog"></i>' + esc(pnames.join(', ')) + '</span>' : '') +
       '<span><i class="k-p2"></i>2e passage dès le ' + fdate(ps[1].from).replace(/\.$/, '') + '</span><span><i class="k-p3"></i>consolidation dès le ' + fdate(ps[2].from).replace(/\.$/, '') + '</span><span><i class="k-exam"></i>examen</span></div></div>';
     return h;
   }
@@ -1055,9 +1055,10 @@
   }
   function progSujets(p, d) { var out = []; progItems(p, d).forEach(function (it) { (SBYF[it.f] || []).forEach(function (sid) { var s = SUJ[sid]; if (out.indexOf(sid) < 0 && itemOk(p, it, s.sujet)) out.push(sid); }); }); return out; }
   function progFiches(p, d) { var out = []; progItems(p, d).forEach(function (it) { if (out.indexOf(it.f) < 0) out.push(it.f); }); return out; }
-  function itemDone(it) { return !!(mem.fiches[it.f] || {}).learned || !!((mem.progDone || {})[it.f + '|' + (it.sec || '')]); }
+  function doneKey(p, f, sec) { return p.id + '|' + f + '|' + (sec || ''); }
+  function itemDone(p, it) { var pd = mem.progDone || {}; return !!(mem.fiches[it.f] || {}).learned || !!pd[doneKey(p, it.f, it.sec)] || !!pd[it.f + '|' + (it.sec || '')]; }
   function progStats(p, d) {
-    var its = progItems(p, d), done = its.filter(itemDone).length, qs = progQcm(p, d), qd = qs.filter(function (id) { return mem.qcm[id]; }), qok = qd.filter(function (id) { return mem.qcm[id].lastOk; }).length;
+    var its = progItems(p, d), done = its.filter(function (it) { return itemDone(p, it); }).length, qs = progQcm(p, d), qd = qs.filter(function (id) { return mem.qcm[id]; }), qok = qd.filter(function (id) { return mem.qcm[id].lastOk; }).length;
     var pages = its.reduce(function (s, it) { return s + (it.partiel ? Math.max(1, Math.round(fpages(it.f) / 5)) : fpages(it.f)); }, 0);
     return { items: its.length, done: done, qcm: qs.length, qdone: qd.length, qok: qok, pages: pages };
   }
@@ -1069,7 +1070,7 @@
   }
   function itemsHtml(p, its) {
     return '<ul class="plist">' + its.map(function (it) {
-      var done = itemDone(it), f = F[it.f];
+      var done = itemDone(p, it), f = F[it.f];
       return '<li class="' + (done ? 'done' : '') + '"><span class="ck" aria-hidden="true">' + (done ? '✓' : '') + '</span><div><a href="' + itemHref(p, it) + '">' + f.th + '</a>' +
         (it.partiel ? '<div class="small muted">' + (it.sec ? 'Partie « ' + esc(it.sec) + ' » seulement' : 'Passages sur le sujet surlignés dans la fiche') + '</div>' : '') +
         '</div><span class="muted small num nowrap">' + (it.partiel ? 'extrait' : fpages(it.f) + ' p.') + '</span></li>';
@@ -1078,7 +1079,7 @@
   function dayActions(p, d, primary) {
     var sc = 'p:' + p.id + ':' + d, nq = progQcm(p, d).length, nc = progCards(p, d).length, nz = progClozes(p, d).length, ss = progSujets(p, d);
     var h = '<div class="row">';
-    var first = p.jours[d].items.filter(function (it) { return !itemDone(it); })[0];
+    var first = p.jours[d].items.filter(function (it) { return !itemDone(p, it); })[0];
     if (primary && first) h += '<a class="btn primary" href="' + itemHref(p, first) + '">Ouvrir la prochaine fiche</a>';
     if (nq) h += '<a class="btn" href="#/qcm?s=' + sc + '&n=tout&go=1">QCM du jour (' + nq + ')</a>';
     if (nc) h += '<a class="btn" href="#/revision?p=' + p.id + ':' + d + '">Questions (' + nc + ')</a>';
@@ -1184,7 +1185,7 @@
         if (progMatch(p, el.textContent)) { el.classList.add('hlprog'); hits.push(el); }
       });
     });
-    var key = fid + '|' + (params.sec || ''), done = !!(mem.progDone || {})[key];
+    var key = doneKey(p, fid, params.sec), done = !!(mem.progDone || {})[key];
     var bar = document.createElement('div'); bar.className = 'progbar';
     bar.innerHTML = '<span><b>' + esc(p.court || p.titre) + '</b> : ' + (params.sec ? 'partie « ' + esc(params.sec) + ' »' : 'extrait') + (hits.length ? ', ' + plural(hits.length, 'passage surligné', 'passages surlignés') : '') + '</span>' +
       (hits.length ? '<button class="btn" id="hlnext">Passage suivant</button>' : '') +
