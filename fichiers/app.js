@@ -175,10 +175,14 @@
     var errN = Object.keys(mem.qcm).filter(function (id) { return QCM[id] && mem.qcm[id].lastOk === false; }).length;
     var nav = [
       ['#/', 'Aujourd’hui', ''],
+      ['#/defi', 'Défi du jour', (mem.defi || {})[today()] ? 'fait' : (defiStreak() ? 'série ' + defiStreak() : '')],
     ].concat((function () { var fp = featuredProg(); if (!fp) return []; var i = progDayIdx(fp.p); return [['#/programme/' + fp.p.id, fp.p.court || fp.p.titre, fp.st === 0 ? 'jour ' + (i + 1) + '/' + fp.p.jours.length : fp.st === 1 ? 'bientôt' : 'fini']]; })(), [
       ['#/revision', 'Réviser les questions', due ? due : ''],
       ['#/qcm', 'QCM', D.qcm.length],
       ['#/ouvertes', 'Questions ouvertes', (D.ouvertes || []).length || ''],
+      ['#/cas', 'Cas cliniques', (D.cas || []).length || ''],
+      ['#/oral', 'Oral blanc', ''],
+      ['#/carte', 'Cartes mentales', ''],
       ['#/examen', 'Examen blanc', exam && !exam.done ? 'en cours' : ''],
       ['#/sujets', 'Sujets rédactionnels', Object.keys(SUJ).length],
       ['#/chiffres', 'Chiffres', ''],
@@ -264,6 +268,9 @@
     // s'entraîner
     var lf = learnedFiches().length, sc = lf ? 'apprises' : 'tout';
     h += '<h2 class="sec">S’entraîner</h2><div class="train">' +
+      '<a class="tile" href="#/defi"><b>Défi du jour</b><span>' + ((mem.defi || {})[today()] ? 'fait aujourd’hui' + (defiStreak() > 1 ? ', série de ' + defiStreak() + ' jours' : '') : '15 questions mêlées sur ce que vous avez vu') + '</span></a>' +
+      ((D.cas || []).length ? '<a class="tile" href="#/cas"><b>Un cas clinique</b><span>dossier progressif, étape par étape</span></a>' : '') +
+      '<a class="tile" href="#/oral"><b>Oral blanc</b><span>question lue, réponse à voix haute, chronométrée</span></a>' +
       '<a class="tile" href="#/qcm?s=' + sc + '&n=20&go=1"><b>20 QCM</b><span>' + (lf ? 'sur vos fiches apprises' : 'au hasard dans toutes les fiches') + '</span></a>' +
       ((D.ouvertes || []).length ? '<a class="tile" href="#/ouvertes?s=' + sc + '&n=10&go=1"><b>10 questions ouvertes</b><span>réponse écrite ou dictée, points clés</span></a>' : '') +
       '<a class="tile" href="#/sujet/' + pickSujet(sc) + '"><b>Un sujet rédactionnel</b><span>plan en temps limité, puis plan attendu</span></a>' +
@@ -446,7 +453,7 @@
   function pageTheme(tid) {
     var t = THEMES[tid]; if (!t) return pageToday();
     var h = '<div class="page"><div class="crumbs">' + esc(CATS[t.cat].name) + '</div><h1 class="title">' + esc(t.name) + '</h1><p class="lede">' + plural(t.all.length, 'fiche') + ', ' + plural(qcmPool('t:' + tid).length, 'QCM') + '</p>';
-    h += '<div class="row">' + (qcmPool('t:' + tid).length ? '<a class="btn primary" href="#/qcm?s=t:' + tid + '&n=20&go=1">20 QCM sur ce thème</a>' : '') + '<a class="btn" href="#/chiffres?portee=' + tid + '">Chiffres du thème</a>' + (D.pdf && D.pdf.themes && D.pdf.themes[tid] ? '<a class="btn" target="_blank" href="' + D.pdf.themes[tid] + '">PDF du thème</a>' : '') + '</div>';
+    h += '<div class="row">' + (qcmPool('t:' + tid).length ? '<a class="btn primary" href="#/qcm?s=t:' + tid + '&n=20&go=1">20 QCM sur ce thème</a>' : '') + '<a class="btn" href="#/chiffres?portee=' + tid + '">Chiffres du thème</a>' + (D.pdf && D.pdf.themes && D.pdf.themes[tid] ? '<a class="btn" target="_blank" href="' + D.pdf.themes[tid] + '">PDF du thème</a>' : '') + '<a class="btn" href="#/carte/' + tid + '">Carte mentale</a>' + (casFor(t.all).length ? '<a class="btn" href="#/cas?t=' + tid + '">Cas cliniques (' + casFor(t.all).length + ')</a>' : '') + (ouvPool('t:' + tid).length ? '<a class="btn" href="#/ouvertes?s=t:' + tid + '&n=10&go=1">Questions ouvertes (' + ouvPool('t:' + tid).length + ')</a>' : '') + '</div>';
     t.groups.forEach(function (g) {
       if (g.name) h += '<h2 class="sec">' + esc(g.name) + '</h2>';
       h += '<div class="list">' + g.fiches.map(function (fid) {
@@ -638,13 +645,14 @@
   }
 
   /* ------------------------------------------------------------------ page : réglages et sauvegarde */
-  function pageData() {
+  function pageData(params) {
     var h = '<div class="page"><h1 class="title">Réglages et sauvegarde</h1>';
     h += '<p class="lede">' + (me ? 'Profil de <b>' + esc(me.nom) + '</b>. ' : '') + 'Votre progression est enregistrée dans ce navigateur, sur cet appareil. Exportez‑la régulièrement : un nettoyage du navigateur l’effacerait.</p>';
     h += '<h2 class="sec">Sauvegarde et transfert</h2><p class="small muted">Le fichier contient votre profil et toute votre progression. Sur un autre appareil, ouvrez le site puis « Importer un profil » sur l’écran de connexion : vous vous connecterez avec le même mot de passe. Si le profil existe déjà là-bas, la version la plus récente est gardée.</p>';
     h += '<div class="row"><button class="btn primary" id="bexp">' + (me ? 'Transférer mon profil (fichier)' : 'Exporter ma progression') + '</button><label class="btn" for="fimp">Importer une sauvegarde dans ce profil</label><input type="file" id="fimp" accept=".json,application/json" hidden></div><p class="small muted" id="msg"></p>';
     if (me) h += '<h2 class="sec">Mon profil</h2><form class="row" id="fpwd" style="align-items:flex-end"><label class="field" style="margin:0"><b>Mot de passe actuel</b><input class="field-in" type="password" id="pw0" autocomplete="current-password" required></label><label class="field" style="margin:0"><b>Nouveau mot de passe</b><input class="field-in" type="password" id="pw1" autocomplete="new-password" minlength="4" required></label><button class="btn" type="submit">Changer le mot de passe</button></form><p class="small muted" id="pmsg"></p>' +
       '<div class="row"><button class="btn" id="blogout">Se déconnecter</button><button class="btn" id="bdelp">Supprimer ce profil de cet appareil</button></div>';
+    h += '<h2 class="sec" id="appli">Appli et hors ligne</h2><div id="offline"></div>';
     h += '<h2 class="sec">Affichage</h2><div class="row">' + [['auto', 'Automatique'], ['light', 'Clair'], ['dark', 'Sombre']].map(function (o) { return '<button class="btn' + (mem.theme === o[0] ? ' on' : '') + '" data-th="' + o[0] + '">' + o[1] + '</button>'; }).join('') + '</div>';
     h += '<h2 class="sec">Repartir de zéro</h2><p class="small muted">Efface toute la progression ' + (me ? 'de ce profil' : 'de ce navigateur') + ' (fiches apprises, révisions, notes).</p><button class="btn" id="breset">Tout effacer</button>';
     h += '<h2 class="sec">À propos des fiches</h2><p class="small">' + ORDER.length + ' fiches, ' + D.cards.length + ' questions, ' + D.clozes.length + ' phrases à trous sur les chiffres, ' + D.chks.length + ' valeurs à vérifier, ' + D.devs.length + ' lectures déduites. Contenu retranscrit de vos résumés manuscrits.</p>';
@@ -660,6 +668,8 @@
       r.readAsText(file);
     });
     $$('[data-th]').forEach(function (b) { b.addEventListener('click', function () { mem.theme = b.dataset.th; save(); setTheme(); route(); }); });
+    renderOffline();
+    if (params && params.appli) { var ap = $('#appli'); if (ap) ap.scrollIntoView(); }
     if (me) {
       $('#fpwd').addEventListener('submit', function (e) {
         e.preventDefault(); var pm = $('#pmsg'), n1 = $('#pw1').value;
@@ -1155,6 +1165,8 @@
     if (no) h += '<a class="btn" href="#/ouvertes?s=' + sc + '&n=10&go=1">Questions ouvertes (' + no + ')</a>';
     if (nz) h += '<a class="btn" href="#/chiffres?portee=' + sc + '&mode=qcm">Chiffres (' + nz + ')</a>';
     h += '<button class="btn" data-cle="' + p.id + ':' + d + '">Écouter les « À retenir »</button>';
+    var ncas = casFor(progItems(p, d).map(function (it) { return it.f; })).length;
+    if (ncas) h += '<a class="btn" href="#/cas?p=' + p.id + ':' + d + '">Cas cliniques (' + ncas + ')</a>';
     if (ss.length) h += '<a class="btn" href="#/sujet/' + pickFrom(ss) + '">Sujet rédactionnel</a>';
     if (p.jours[d].examen) h += '<a class="btn' + (primary && !first ? ' primary' : '') + '" href="#/examen?s=p:' + p.id + '">Examen blanc du programme</a>';
     return h + '</div>';
@@ -1286,6 +1298,8 @@
     if (r.name !== 'fiche' && scanFid) closeScans(true);
     if (tts && tts.blocks.some(function (b) { return b.el; })) ttsStop();
     if (r.name !== 'ouvertes') oq = null;
+    if (r.name !== 'cas') cst = null;
+    if (r.name !== 'oral') { clearInterval(oralTimer); oralStopRec(); if (oral && !r.params.go) oral = null; }
     switch (r.name) {
       case 'fiche': pageFiche(r.arg, r.params.ancre, r.params); break;
       case 'programme': pageProgramme(r.arg); break;
@@ -1296,6 +1310,10 @@
       case 'a-verifier': pageVerif(r.params); break;
       case 'qcm': pageQcm(r.params); break;
       case 'ouvertes': pageOuvertes(r.params); break;
+      case 'cas': if (r.arg) pageCas(r.arg); else pageCasList(r.params); break;
+      case 'defi': pageDefi(); break;
+      case 'oral': pageOral(r.params); break;
+      case 'carte': pageCarte(r.arg); break;
       case 'examen': pageExamen(r.params); break;
       case 'sujets': pageSujets(r.params); break;
       case 'sujet': pageSujet(r.arg, r.params); break;
@@ -1303,11 +1321,11 @@
       case 'stats': pageStats(); break;
       case 'pdf': pagePdf(); break;
       case 'planning': pagePlanning(); break;
-      case 'donnees': pageData(); break;
+      case 'donnees': pageData(r.params); break;
       default: pageToday();
     }
     renderSide(r);
-    var titles = { fiche: r.arg && F[r.arg] ? F[r.arg].title : '', revision: 'Révision', chiffres: 'Chiffres', recherche: 'Recherche', 'a-verifier': 'À vérifier', planning: 'Planning', donnees: 'Réglages', qcm: 'QCM', ouvertes: 'Questions ouvertes', examen: 'Examen blanc', sujets: 'Sujets rédactionnels', sujet: 'Sujet', erreurs: 'Carnet d’erreurs', stats: 'Statistiques', pdf: 'PDF', programme: 'Programme' };
+    var titles = { fiche: r.arg && F[r.arg] ? F[r.arg].title : '', revision: 'Révision', chiffres: 'Chiffres', recherche: 'Recherche', 'a-verifier': 'À vérifier', planning: 'Planning', donnees: 'Réglages', qcm: 'QCM', ouvertes: 'Questions ouvertes', cas: 'Cas cliniques', defi: 'Défi du jour', oral: 'Oral blanc', carte: 'Carte mentale', examen: 'Examen blanc', sujets: 'Sujets rédactionnels', sujet: 'Sujet', erreurs: 'Carnet d’erreurs', stats: 'Statistiques', pdf: 'PDF', programme: 'Programme' };
     document.title = (titles[r.name] ? titles[r.name] + ' – ' : '') + 'Révision DEMS';
     if (r.name !== 'fiche' && r.name !== 'revision' && r.name !== 'chiffres') window.scrollTo(0, 0);
   }
@@ -1565,6 +1583,299 @@
     return out;
   }
 
+
+  /* ================================================================== CAS CLINIQUES PROGRESSIFS */
+  var CAS = {}; (D.cas || []).forEach(function (c) { CAS[c.id] = c; });
+  var cst = null; // cas en cours
+  function casFor(fids) { return (D.cas || []).filter(function (c) { return c.fids.some(function (f) { return fids.indexOf(f) >= 0; }); }); }
+  function themeOfCas(c) { var f = F[c.fids[0]]; return f ? THEMES[f.theme] : null; }
+  function pageCasList(params) {
+    mem.cas = mem.cas || {};
+    var list = D.cas || [], fil = params.t || '';
+    if (params.p) { var pp = parseP('p:' + params.p); if (pp.p) { var fids = []; progItems(pp.p, pp.d).forEach(function (it) { fids.push(it.f); }); list = casFor(fids); } }
+    else if (fil) list = list.filter(function (c) { return c.theme === fil; });
+    var themes = {}; (D.cas || []).forEach(function (c) { themes[c.theme] = (themes[c.theme] || 0) + 1; });
+    var h = '<div class="page"><h1 class="title">Cas cliniques</h1><p class="lede">' + plural((D.cas || []).length, 'cas progressif', 'cas progressifs') + ' tirés de vos fiches. Le dossier se dévoile étape par étape : répondez à chaque question avant de voir la suite, comme à l’examen.</p>';
+    if (!(D.cas || []).length) return (main.innerHTML = h + '<div class="empty">Les cas cliniques sont en cours de rédaction.</div></div>');
+    h += '<div class="tabs"><a class="btn' + (!fil && !params.p ? ' on' : '') + '" href="#/cas">Tous</a>' + Object.keys(themes).map(function (t) { var th = THEMES[t]; return '<a class="btn' + (fil === t ? ' on' : '') + '" href="#/cas?t=' + t + '">' + esc(th ? th.short : t) + ' (' + themes[t] + ')</a>'; }).join('') + '</div>';
+    h += '<div class="list">' + list.map(function (c) {
+      var st = mem.cas[c.id];
+      return '<div class="it"><span class="num small">' + (st ? Math.round(100 * st.best) + ' %' : '–') + '</span><div><a class="ttl" href="#/cas/' + c.id + '">' + qt(c.titre) + '</a><div class="small muted">' + plural(c.etapes.length, 'étape') + ', niveau ' + c.niveau + ', ' + c.fids.slice(0, 3).map(function (f) { return F[f].title; }).join(' ; ') + '</div></div></div>';
+    }).join('') + '</div></div>';
+    main.innerHTML = h;
+  }
+  function pageCas(id) {
+    var c = CAS[id]; if (!c) return pageCasList({});
+    mem.cas = mem.cas || {};
+    if (!cst || cst.id !== id) cst = { id: id, i: 0, done: false, sel: [], ans: '', res: [], hist: [] };
+    var z = cst, h = '<div class="page"><div class="crumbs"><a href="#/cas">Cas cliniques</a>' + (themeOfCas(c) ? ' / ' + esc(themeOfCas(c).short) : '') + '</div><h1 class="title">' + qt(c.titre) + '</h1>';
+    h += '<div class="muted small">Étape ' + Math.min(z.i + 1, c.etapes.length) + ' sur ' + c.etapes.length + '</div><div class="progress"><span style="width:' + Math.round(100 * z.i / c.etapes.length) + '%"></span></div>';
+    // dossier déjà dévoilé
+    h += '<div class="dossier">' + z.hist.map(function (x, k) { var e = c.etapes[k]; return '<div class="dstep"><p>' + qt(e.texte) + '</p><p class="dq"><b>' + qt(e.q) + '</b></p><p class="dres ' + (x.sc >= .99 ? 'good' : x.sc > 0 ? 'half' : 'bad') + '">' + x.txt + '</p></div>'; }).join('') + '</div>';
+    if (z.i >= c.etapes.length) {
+      var avg = z.res.reduce(function (a, b) { return a + b; }, 0) / z.res.length;
+      h += '<div class="card"><h2 style="margin:0 0 6px">Ce qu’il fallait retenir</h2><div class="omodel">' + fmtAnswer(c.synthese) + '</div><p><b>Score : ' + Math.round(100 * avg) + ' %</b></p>' +
+        '<div class="row">' + c.fids.map(function (f) { return '<a class="btn" href="' + link(f) + '">' + esc(F[f].title.length > 50 ? F[f].title.slice(0, 48) + '…' : F[f].title) + '</a>'; }).join('') + '</div>' +
+        '<div class="row" style="margin-top:12px"><button class="btn primary" id="cagain">Refaire ce cas</button><a class="btn" href="#/cas' + (c.theme ? '?t=' + c.theme : '') + '">Autres cas</a></div></div>';
+      main.innerHTML = h + '</div>';
+      if (!z.done) { z.done = true; var k = mem.cas[id] || { n: 0, best: 0 }; k.n++; k.last = avg; k.best = Math.max(k.best, avg); k.d = today(); mem.cas[id] = k; logToday('cas'); save(); }
+      $('#cagain').addEventListener('click', function () { cst = null; pageCas(id); });
+      return;
+    }
+    var e = c.etapes[z.i];
+    h += '<div class="card cas"><div class="newinfo">' + qt(e.texte) + '</div><div class="q">' + qt(e.q) + '</div>';
+    if (e.type === 'qcm') {
+      var fb = z.shown;
+      h += '<div class="muted small">' + (e.bonnes.length > 1 ? 'Plusieurs réponses possibles' : 'Une seule réponse') + '</div><ol class="opts">' + e.choix.map(function (ch, i) {
+        var on = z.sel.indexOf(i) >= 0, cls = on ? ' on' : '';
+        if (fb) { var good = e.bonnes.indexOf(i) >= 0; cls += good ? (on ? ' ok' : ' miss') : (on ? ' ko' : ''); }
+        return '<li><button class="opt' + cls + '" data-o="' + i + '"' + (fb ? ' disabled' : '') + '><span class="let">' + LET[i] + '</span><span>' + qt(ch) + '</span></button></li>';
+      }).join('') + '</ol>';
+      if (fb) h += '<div class="expl">' + qt(e.explication || '') + '</div>';
+    } else {
+      if (!z.shown) h += '<textarea class="draft" id="cans" placeholder="Votre réponse, écrite ou dictée…">' + esc(z.ans) + '</textarea><div class="row"><button class="btn" id="cdict">Dicter</button><span class="status" id="cdst"></span></div>';
+      else {
+        var an = normAns(z.ans), hit = e.points.map(function (pt) { return pointHit(an, pt); });
+        if (z.ans.trim()) h += '<div class="oyours"><b>Votre réponse</b><p>' + esc(z.ans).replace(/\n/g, '<br>') + '</p></div>';
+        h += '<div class="omodel"><div class="ohd"><b>Réponse attendue</b></div>' + fmtAnswer(e.reponse) + '</div><div class="opoints"><b>Points clés</b> <span class="muted small" id="cscore"></span><ul>' +
+          e.points.map(function (pt, i) { return '<li><label><input type="checkbox" data-i="' + i + '"' + (hit[i] ? ' checked' : '') + '> ' + qt(pt.p) + '</label></li>'; }).join('') + '</ul></div>';
+      }
+    }
+    h += '<div class="row actions">' + (z.shown ? '<button class="btn primary" id="cnext">' + (z.i + 1 < c.etapes.length ? 'Étape suivante' : 'Voir la synthèse') + '</button>' : '<button class="btn primary" id="ccheck">Valider</button>') + '</div></div>';
+    main.innerHTML = h + '</div>';
+    $$('.card.cas button.opt').forEach(function (b) { b.addEventListener('click', function () { var o = +b.dataset.o; if (e.bonnes.length > 1) { var k = z.sel.indexOf(o); if (k >= 0) z.sel.splice(k, 1); else z.sel.push(o); } else z.sel = [o]; pageCas(id); }); });
+    var ta = $('#cans'), stopD = null; if (ta) { ta.addEventListener('input', function () { z.ans = ta.value; }); stopD = attachDictation(ta, $('#cdict'), $('#cdst')); }
+    var cc = $('#ccheck'); if (cc) cc.addEventListener('click', function () { if (stopD) stopD(); if (ta) z.ans = ta.value; if (e.type === 'qcm' && !z.sel.length) return; z.shown = true; pageCas(id); });
+    var up = function () { var n = $$('.opoints input:checked').length, el = $('#cscore'); if (el) el.textContent = n + ' sur ' + e.points.length; };
+    $$('.opoints input').forEach(function (cb) { cb.addEventListener('change', up); }); up();
+    var cn = $('#cnext'); if (cn) cn.addEventListener('click', function () {
+      var sc, txt;
+      if (e.type === 'qcm') { sc = scoreQ({ bonnes: e.bonnes, choix: e.choix, type: e.bonnes.length > 1 ? 'multiple' : 'unique' }, z.sel); txt = (sc >= 1 ? 'Juste' : sc > 0 ? 'Presque' : 'Faux') + ' : ' + e.bonnes.map(function (b) { return qt(e.choix[b]); }).join(' ; ') + '.'; }
+      else { var n = $$('.opoints input:checked').length; sc = n / e.points.length; txt = n + ' point' + (n > 1 ? 's' : '') + ' clé' + (n > 1 ? 's' : '') + ' sur ' + e.points.length + '.'; }
+      z.res.push(sc); z.hist.push({ sc: sc, txt: txt }); z.i++; z.sel = []; z.ans = ''; z.shown = false; pageCas(id); window.scrollTo(0, 0);
+    });
+  }
+
+  /* ================================================================== DÉFI DU JOUR (15 questions mélangées sur ce qui a été vu) */
+  function seeded(seed) { var s = 0; for (var i = 0; i < seed.length; i++) s = (s * 31 + seed.charCodeAt(i)) >>> 0; return function () { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
+  function sshuffle(a, rnd) { for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(rnd() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+  function defiBuild() {
+    var t = today(), rnd = seeded(t + (me ? me.id : '')), seen = learnedFiches();
+    if (seen.length < 3) { var fp = featuredProg(); seen = fp ? progItems(fp.p).map(function (it) { return it.f; }) : ORDER.slice(0, 12); }
+    var q = [], z = [], o = [];
+    seen.forEach(function (f) { (QBYF[f] || []).forEach(function (id) { q.push(id); }); (OBYF[f] || []).forEach(function (id) { if (OUV[id].type === 'courte') o.push(id); }); });
+    D.clozes.forEach(function (c) { if (seen.indexOf(c.f) >= 0) z.push(c.id); });
+    var err = q.filter(function (id) { return mem.qcm[id] && mem.qcm[id].lastOk === false; }), fresh = q.filter(function (id) { return !mem.qcm[id]; }), old = q.filter(function (id) { return mem.qcm[id] && mem.qcm[id].lastOk; });
+    var pick = sshuffle(err, rnd).slice(0, 4); pick = pick.concat(sshuffle(fresh, rnd).slice(0, 8 - pick.length)); if (pick.length < 8) pick = pick.concat(sshuffle(old, rnd).slice(0, 8 - pick.length));
+    var list = pick.map(function (id) { return { k: 'q', id: id }; }).concat(sshuffle(z, rnd).slice(0, 4).map(function (id) { return { k: 'z', id: id }; }), sshuffle(o.filter(function (id) { return !(mem.ouv || {})[id] || mem.ouv[id].last < 1; }), rnd).slice(0, 3).map(function (id) { return { k: 'o', id: id }; }));
+    return { date: t, list: sshuffle(list, rnd), i: 0, res: [], sel: [], shown: false, ans: '' };
+  }
+  var ZB = null; function clozeById(id) { if (!ZB) { ZB = {}; D.clozes.forEach(function (c) { ZB[c.id] = c; }); } return ZB[id]; }
+  function defiStreak() { var n = 0, d = today(); mem.defi = mem.defi || {}; if (!mem.defi[d]) d = addDays(d, -1); while (mem.defi[d]) { n++; d = addDays(d, -1); } return n; }
+  function pageDefi() {
+    mem.defi = mem.defi || {};
+    if (!mem.defiCur || mem.defiCur.date !== today()) { mem.defiCur = defiBuild(); save(); }
+    var z = mem.defiCur, h = '<div class="page"><h1 class="title">Défi du jour</h1>';
+    if (!z.list.length) return (main.innerHTML = h + '<div class="empty">Apprenez quelques fiches pour débloquer le défi du jour.</div></div>');
+    if (z.i >= z.list.length) {
+      var tot = z.res.reduce(function (a, b) { return a + b; }, 0), sc = Math.round(10 * 20 * tot / z.list.length) / 10;
+      if (!mem.defi[z.date]) { mem.defi[z.date] = { s: tot, n: z.list.length }; logToday('defi'); save(); }
+      var st = defiStreak();
+      h += '<div class="card"><div class="big num" style="font-family:var(--read);font-size:3rem;font-weight:600">' + String(sc).replace('.', ',') + ' / 20</div><p>' + (st > 1 ? 'Série en cours : <b>' + st + ' jours</b> d’affilée. ' : '') + 'Revenez demain pour un nouveau défi : il mélange vos erreurs, des questions jamais vues et des chiffres des fiches déjà apprises.</p><div class="row"><a class="btn primary" href="#/">Retour à l’accueil</a><a class="btn" href="#/qcm?s=erreurs&n=tout&go=1">Refaire mes erreurs</a></div></div>';
+      return (main.innerHTML = h + '</div>');
+    }
+    var it = z.list[z.i];
+    h += '<div class="muted small">' + (z.i + 1) + ' sur ' + z.list.length + (defiStreak() ? ', série de ' + plural(defiStreak(), 'jour') : '') + '</div><div class="progress"><span style="width:' + Math.round(100 * z.i / z.list.length) + '%"></span></div>';
+    var nextBtn = '<div class="row actions"><button class="btn primary" id="dnext">' + (z.i + 1 < z.list.length ? 'Question suivante' : 'Voir mon score') + '</button></div>';
+    if (it.k === 'q') {
+      var q = QCM[it.id];
+      h += qcmCard(q, z, { feedback: z.shown }).replace(/<\/div>\s*$/, '');
+      h += z.shown ? '<div class="expl">' + qt(q.explication || '') + '</div>' + nextBtn + '</div>' : '<div class="row actions"><button class="btn primary" id="dcheck">Valider</button></div></div>';
+    } else if (it.k === 'z') {
+      var c = clozeById(it.id);
+      h += '<div class="card cloze"><div class="src"><a href="' + link(c.f) + '">' + F[c.f].th + '</a>' + (c.h ? '<span class="muted">, ' + esc(c.h) + '</span>' : '') + '</div><div class="text">' + qt(c.b) + ' <span class="blank">' + (z.shown ? qt(c.v) : '?') + '</span> ' + qt(c.a) + '</div>';
+      h += z.shown ? '<div class="row actions"><button class="btn" data-g="0">Je ne savais pas</button><button class="btn primary" data-g="1">Je savais</button></div></div>' : '<div class="row actions"><button class="btn primary" id="dshow">Afficher la valeur</button></div></div>';
+    } else {
+      var o = OUV[it.id];
+      h += '<div class="card ouv"><div class="src"><a href="' + link(o.f) + '">' + F[o.f].th + '</a><span class="muted">, question courte</span></div><div class="q">' + qt(o.q) + '</div>';
+      if (!z.shown) h += '<textarea class="draft" id="dans" placeholder="Votre réponse, écrite ou dictée…">' + esc(z.ans || '') + '</textarea><div class="row"><button class="btn" id="ddict">Dicter</button><span class="status" id="ddst"></span></div><div class="row actions"><button class="btn primary" id="dshow">Voir la réponse</button></div></div>';
+      else {
+        var an = normAns(z.ans || ''), hit = o.points.map(function (pt) { return pointHit(an, pt); });
+        h += '<div class="omodel">' + fmtAnswer(o.reponse) + '</div><div class="opoints"><b>Points clés</b><ul>' + o.points.map(function (pt, i) { return '<li><label><input type="checkbox" data-i="' + i + '"' + (hit[i] ? ' checked' : '') + '> ' + qt(pt.p) + '</label></li>'; }).join('') + '</ul></div>' + nextBtn + '</div>';
+      }
+    }
+    main.innerHTML = h + '</div>';
+    function adv(sc) { z.res.push(sc); z.i++; z.sel = []; z.shown = false; z.ans = ''; save(); pageDefi(); window.scrollTo(0, 0); }
+    if (it.k === 'q') {
+      var q2 = QCM[it.id];
+      $$('button.opt').forEach(function (b) { b.addEventListener('click', function () { var o2 = +b.dataset.o; if (q2.type === 'multiple') { var k = z.sel.indexOf(o2); if (k >= 0) z.sel.splice(k, 1); else z.sel.push(o2); } else z.sel = [o2]; pageDefi(); }); });
+      var dc = $('#dcheck'); if (dc) dc.addEventListener('click', function () { if (!z.sel.length) return; z.shown = true; z.sc = scoreQ(q2, z.sel); recordQ(it.id, z.sc); save(); pageDefi(); });
+      var dn = $('#dnext'); if (dn) dn.addEventListener('click', function () { adv(z.sc || 0); });
+    } else if (it.k === 'z') {
+      var ds = $('#dshow'); if (ds) ds.addEventListener('click', function () { z.shown = true; pageDefi(); });
+      $$('[data-g]').forEach(function (b) { b.addEventListener('click', function () { adv(+b.dataset.g); }); });
+    } else {
+      var ta = $('#dans'), stopD = null; if (ta) { ta.addEventListener('input', function () { z.ans = ta.value; }); stopD = attachDictation(ta, $('#ddict'), $('#ddst')); }
+      var ds2 = $('#dshow'); if (ds2) ds2.addEventListener('click', function () { if (stopD) stopD(); if (ta) z.ans = ta.value; z.shown = true; pageDefi(); });
+      var dn2 = $('#dnext'); if (dn2) dn2.addEventListener('click', function () { var o3 = OUV[it.id], sc = $$('.opoints input:checked').length / o3.points.length; mem.ouv = mem.ouv || {}; var k = mem.ouv[o3.id] || { n: 0, best: 0 }; k.n++; k.last = sc; k.best = Math.max(k.best, sc); k.d = today(); mem.ouv[o3.id] = k; adv(sc); });
+    }
+  }
+
+  /* ================================================================== ORAL BLANC */
+  var oral = null;
+  function pageOral(params) {
+    if (!oral || !params.go) return oralConfig(params);
+    oralRender();
+  }
+  function oralConfig(params) {
+    var learnedN = learnedFiches().length;
+    var h = '<div class="page"><h1 class="title">Oral blanc</h1><p class="lede">Le site lit la question à voix haute, vous laisse un temps de préparation, puis vous répondez à l’oral, en temps limité. Votre réponse est transcrite ; à la fin, la réponse attendue s’affiche avec les points clés que vous avez cités déjà cochés.</p>';
+    h += '<div class="panel"><div class="grid2"><label class="field"><b>Sur quoi ?</b>' + scopeSelect('ors', params.s || (learnedN ? 'apprises' : 'tout')) + '</label>' +
+      '<label class="field"><b>Questions</b><select class="field-in" id="orn"><option>3</option><option selected>5</option><option>8</option></select></label>' +
+      '<label class="field"><b>Préparation</b><select class="field-in" id="orp"><option value="0">Aucune</option><option value="30">30 secondes</option><option value="60" selected>1 minute</option><option value="120">2 minutes</option></select></label>' +
+      '<label class="field"><b>Type</b><select class="field-in" id="ort"><option value="mix">Moyennes et longues</option><option value="moyenne">Moyennes (3 à 6 min)</option><option value="longue">Longues (10 à 20 min)</option><option value="courte">Courtes (1 à 2 min)</option></select></label></div>';
+    h += '<div class="row" style="margin-top:14px"><button class="btn primary" id="orgo">Commencer l’oral</button><span class="muted small" id="orcount"></span></div>';
+    if (!SR) h += '<p class="small muted">Ce navigateur ne sait pas transcrire la voix : vous pourrez répondre à l’oral, puis cocher vous-même les points clés. Pour la transcription, utilisez Chrome, Edge ou Safari.</p>';
+    main.innerHTML = h + '</div></div>';
+    function pool() { var t = $('#ort').value; return ouvPool($('#ors').value).filter(function (id) { var ty = OUV[id].type; return t === 'mix' ? ty !== 'courte' : ty === t; }); }
+    function upd() { $('#orcount').textContent = plural(pool().length, 'question disponible', 'questions disponibles') + '.'; }
+    ['ors', 'ort'].forEach(function (id) { $('#' + id).addEventListener('change', upd); }); upd();
+    $('#orgo').addEventListener('click', function () {
+      var l = shuffle(pool()).slice(0, +$('#orn').value); if (!l.length) return;
+      oral = { list: l, i: 0, prep: +$('#orp').value, phase: 'lecture', txt: '', res: [], spoke: 0 };
+      location.hash = '#/oral?go=1';
+    });
+  }
+  var oralTimer = null, oralRec = null;
+  function oralStopRec() { if (oralRec) { oralRec.keep = false; try { oralRec.r.stop(); } catch (e) { /* rien */ } } oralRec = null; }
+  function oralRender() {
+    var z = oral; clearInterval(oralTimer);
+    var h = '<div class="page"><h1 class="title">Oral blanc</h1>';
+    if (z.i >= z.list.length) {
+      oralStopRec(); ttsStop();
+      var avg = z.res.length ? Math.round(100 * z.res.reduce(function (a, b) { return a + b; }, 0) / z.res.length) : 0;
+      h += '<p class="lede">' + plural(z.res.length, 'question', 'questions') + ', ' + avg + ' % des points clés cités en moyenne, ' + Math.round(z.spoke / 60) + ' min de parole.</p><div class="list">' + z.list.map(function (id, i) { var o = OUV[id]; return '<div class="it"><span class="num small">' + (z.res[i] === undefined ? '–' : Math.round(100 * z.res[i]) + ' %') + '</span><div><span class="ttl">' + qt(o.q) + '</span><div class="small muted">' + F[o.f].title + '</div></div></div>'; }).join('') + '</div><div class="row" style="margin-top:16px"><a class="btn primary" href="#/oral">Nouvel oral</a></div>';
+      return (main.innerHTML = h + '</div>');
+    }
+    var o = OUV[z.list[z.i]], limit = Math.max(60, Math.round((o.duree || 3) * 60));
+    h += '<div class="muted small">Question ' + (z.i + 1) + ' sur ' + z.list.length + '</div><div class="progress"><span style="width:' + Math.round(100 * z.i / z.list.length) + '%"></span></div>';
+    h += '<div class="card oral"><div class="src"><a href="' + link(o.f) + '">' + F[o.f].th + '</a><span class="muted">, ' + TYPEL[o.type].toLowerCase() + '</span></div><div class="q">' + qt(o.q) + '</div>';
+    if (z.phase === 'lecture' || z.phase === 'prep') {
+      h += '<div class="orbig"><span class="timer num" id="ortime"></span><span id="orlab"></span></div><div class="row actions"><button class="btn primary" id="orstart">Commencer à parler</button><button class="btn" id="orskip">Passer</button></div>';
+    } else if (z.phase === 'parle') {
+      h += '<div class="orbig"><span class="timer num" id="ortime"></span><span id="orlab">' + (SR ? 'Parlez : votre réponse s’écrit ci-dessous.' : 'Répondez à voix haute.') + '</span></div><div class="transcript" id="ortx">' + esc(z.txt) + '</div><div class="row actions"><button class="btn primary" id="ordone">J’ai fini</button></div>';
+    } else {
+      var an = normAns(z.txt), hit = o.points.map(function (pt) { return pointHit(an, pt); });
+      if (z.txt.trim()) h += '<div class="oyours"><b>Ce que vous avez dit</b><p>' + esc(z.txt) + '</p></div>';
+      h += '<div class="omodel"><div class="ohd"><b>Réponse attendue</b></div>' + fmtAnswer(o.reponse) + '</div><div class="opoints"><b>Points clés</b> <span class="muted small" id="orsc"></span><ul>' + o.points.map(function (pt, i) { return '<li><label><input type="checkbox" data-i="' + i + '"' + (hit[i] ? ' checked' : '') + '> ' + qt(pt.p) + '</label></li>'; }).join('') + '</ul></div><div class="row actions"><button class="btn primary" id="ornext">' + (z.i + 1 < z.list.length ? 'Question suivante' : 'Bilan de l’oral') + '</button></div>';
+    }
+    main.innerHTML = h + '</div></div>';
+    var tEl = $('#ortime');
+    function countdown(sec, lab, done) {
+      var end = Date.now() + sec * 1000; $('#orlab').textContent = lab;
+      var tick = function () { var l = Math.max(0, Math.round((end - Date.now()) / 1000)); if (!$('#ortime')) { clearInterval(oralTimer); return; } $('#ortime').textContent = mmss(l); if (!l) { clearInterval(oralTimer); done(); } };
+      tick(); oralTimer = setInterval(tick, 500);
+    }
+    function startTalk() { clearInterval(oralTimer); ttsStop(); z.phase = 'parle'; z.t0 = Date.now(); oralRender(); }
+    if (z.phase === 'lecture') {
+      tEl.textContent = '';
+      $('#orlab').textContent = 'Écoutez la question…';
+      ttsOpen([{ text: 'Question ' + (z.i + 1) + '. ' + o.q }], 'Oral blanc');
+      var waitEnd = setInterval(function () { if (!tts || !tts.playing || tts.i >= tts.blocks.length || (window.speechSynthesis && !speechSynthesis.speaking)) { clearInterval(waitEnd); if (z.phase !== 'lecture' || !$('#ortime')) return; ttsStop(); z.phase = 'prep'; if (z.prep) countdown(z.prep, 'Préparation : organisez votre plan dans votre tête.', startTalk); else startTalk(); } }, 400);
+    } else if (z.phase === 'prep') countdown(z.prep, 'Préparation : organisez votre plan dans votre tête.', startTalk);
+    else if (z.phase === 'parle') {
+      countdown(limit, '', function () { finishTalk(); });
+      $('#orlab').textContent = SR ? 'Parlez : votre réponse s’écrit ci-dessous.' : 'Répondez à voix haute.';
+      if (SR && !oralRec) {
+        oralRec = { keep: true, base: z.txt };
+        var go = function () {
+          if (!oralRec || !oralRec.keep) return;
+          var r = new SR(); r.lang = 'fr-FR'; r.continuous = true; r.interimResults = true; oralRec.r = r; var base = z.txt ? z.txt.replace(/\s*$/, ' ') : '';
+          r.onresult = function (ev) { var t = ''; for (var i = 0; i < ev.results.length; i++) t += ev.results[i][0].transcript; z.txt = base + t; var el = $('#ortx'); if (el) { el.textContent = z.txt; el.scrollTop = el.scrollHeight; } };
+          r.onerror = function (ev) { if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') { oralRec.keep = false; $('#orlab').textContent = 'Micro refusé : répondez à voix haute, puis cochez vous-même les points clés.'; } };
+          r.onend = function () { if (oralRec && oralRec.keep) setTimeout(go, 200); }; // la reconnaissance s'arrête après un silence : on la relance
+          try { r.start(); } catch (e) { /* rien */ }
+        };
+        go();
+      }
+    }
+    function finishTalk() { clearInterval(oralTimer); oralStopRec(); z.spoke += Math.round((Date.now() - (z.t0 || Date.now())) / 1000); z.phase = 'correction'; oralRender(); }
+    var bs = $('#orstart'); if (bs) bs.addEventListener('click', startTalk);
+    var bk = $('#orskip'); if (bk) bk.addEventListener('click', function () { clearInterval(oralTimer); ttsStop(); z.res.push(0); z.i++; z.phase = 'lecture'; z.txt = ''; oralRender(); });
+    var bd = $('#ordone'); if (bd) bd.addEventListener('click', finishTalk);
+    var up = function () { var n = $$('.opoints input:checked').length, el = $('#orsc'); if (el) el.textContent = n + ' sur ' + o.points.length; };
+    $$('.opoints input').forEach(function (cb) { cb.addEventListener('change', up); }); up();
+    var bn = $('#ornext'); if (bn) bn.addEventListener('click', function () {
+      var sc = $$('.opoints input:checked').length / o.points.length; mem.ouv = mem.ouv || {}; var k = mem.ouv[o.id] || { n: 0, best: 0 }; k.n++; k.last = sc; k.best = Math.max(k.best, sc); k.d = today(); mem.ouv[o.id] = k; logToday('oral'); save();
+      z.res.push(sc); z.i++; z.phase = 'lecture'; z.txt = ''; oralRender(); window.scrollTo(0, 0);
+    });
+  }
+
+  /* ================================================================== CARTES MENTALES (arbre cliquable du thème) */
+  var mapOpen = {};
+  function headTree(fid) {
+    var tmp = document.createElement('div'); tmp.innerHTML = F[fid].html; var out = [], cur = null;
+    $$('h2, h3', tmp).forEach(function (h) {
+      if (h.closest('.cle, .autotest, .plan')) return;
+      var t = h.textContent.trim(); if (!t) return;
+      if (h.tagName === 'H2') { cur = { t: t, kids: [] }; out.push(cur); } else if (cur) cur.kids.push({ t: t });
+    });
+    return out;
+  }
+  function pageCarte(tid) {
+    var th = THEMES[tid];
+    if (!th) {
+      var h0 = '<div class="page"><h1 class="title">Cartes mentales</h1><p class="lede">Une carte par thème : les fiches, puis leurs parties. Cliquez sur une fiche pour l’ouvrir dans la carte, sur une partie pour y aller directement.</p><div class="pthemes">';
+      D.cats.forEach(function (c) { c.themes.forEach(function (t) { h0 += '<a href="#/carte/' + t.id + '">' + esc(t.name) + '</a>'; }); });
+      return (main.innerHTML = h0 + '</div></div>');
+    }
+    mapOpen[tid] = mapOpen[tid] || {};
+    var root = { t: th.name, kind: 'root', kids: [] };
+    th.groups.forEach(function (g) {
+      var parent = root;
+      if (g.name && th.groups.length > 1) { parent = { t: g.name, kind: 'grp', kids: [] }; root.kids.push(parent); }
+      g.fiches.forEach(function (fid) {
+        var n = { t: strip(F[fid].th), kind: 'fiche', fid: fid, kids: [] };
+        if (mapOpen[tid][fid]) headTree(fid).forEach(function (h2) { var hn = { t: h2.t, kind: 'sec', fid: fid, kids: [] }; if (mapOpen[tid][fid + '|' + h2.t]) hn.kids = h2.kids.map(function (h3) { return { t: h3.t, kind: 'sub', fid: fid, kids: [] }; }); hn.more = h2.kids.length; n.kids.push(hn); });
+        parent.kids.push(n);
+      });
+    });
+    // mise en page : profondeur → colonne, feuilles → lignes
+    var COLW = [210, 190, 250, 250, 240], ROWH = 30, PAD = 14, rows = 0, maxd = 0, nodes = [], edges = [];
+    function wrap(t, w) { var max = Math.floor(w / 7.2), words = t.split(' '), lines = [''], k = 0; words.forEach(function (wd) { if ((lines[k] + ' ' + wd).trim().length > max && lines[k]) { if (lines.length === 2) { lines[1] = lines[1].replace(/.{0,2}$/, '…'); return; } lines.push(''); k++; } lines[k] = (lines[k] + ' ' + wd).trim(); }); return lines; }
+    function lay(n, d, x) {
+      n.d = d; n.x = x; maxd = Math.max(maxd, d); var w = (COLW[d] || 230) - 24; n.lines = wrap(n.t, w); n.w = w;
+      if (!n.kids.length) { n.y = PAD + rows * ROWH + (n.lines.length - 1) * 7; rows += n.lines.length > 1 ? 1.5 : 1; }
+      else { n.kids.forEach(function (k) { lay(k, d + 1, x + (COLW[d] || 230)); }); n.y = (n.kids[0].y + n.kids[n.kids.length - 1].y) / 2; }
+      nodes.push(n); n.kids.forEach(function (k) { edges.push([n, k]); });
+    }
+    lay(root, 0, PAD);
+    var W = PAD * 2 + COLW.slice(0, maxd + 1).reduce(function (a, b) { return a + b; }, 0), H = PAD * 2 + rows * ROWH;
+    var svg = '<svg class="mindmap" viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="Carte mentale : ' + esc(th.name) + '">';
+    edges.forEach(function (e) { var a = e[0], b = e[1], x1 = a.x + a.w + 6, x2 = b.x - 4, mx = (x1 + x2) / 2; svg += '<path class="edge" d="M' + x1 + ' ' + a.y + ' C' + mx + ' ' + a.y + ' ' + mx + ' ' + b.y + ' ' + x2 + ' ' + b.y + '"/>'; });
+    nodes.forEach(function (n) {
+      var col = n.kind === 'fiche' ? dotColor(n.fid) : '', act = n.kind === 'fiche' ? 'data-tog="' + n.fid + '"' : n.kind === 'sec' ? 'data-sec="' + esc(n.t) + '" data-f="' + n.fid + '"' + (n.more ? ' data-sub="' + esc(n.fid + '|' + n.t) + '"' : '') : n.kind === 'sub' ? 'data-sec="' + esc(n.t) + '" data-f="' + n.fid + '"' : '';
+      svg += '<g class="node ' + n.kind + (n.kind === 'fiche' && mapOpen[tid][n.fid] ? ' open' : '') + '" ' + act + ' tabindex="' + (act ? 0 : -1) + '">';
+      if (n.kind === 'fiche') svg += '<rect class="dotm" x="' + (n.x - 2) + '" y="' + (n.y - 5) + '" width="10" height="10" rx="2"' + (col ? ' style="fill:' + col + '"' : '') + '/>';
+      if (act) { var hh = Math.max(24, n.lines.length * 15 + 8); svg += '<rect class="hit" x="' + (n.x - 6) + '" y="' + (n.y - hh / 2) + '" width="' + (n.w + (n.kind === 'sec' && n.more && !n.kids.length ? 44 : 12)) + '" height="' + hh + '" rx="5"/>'; }
+      var tx = n.kind === 'fiche' ? n.x + 14 : n.x;
+      n.lines.forEach(function (l, i) { svg += '<text x="' + tx + '" y="' + (n.y + 4 + (i - (n.lines.length - 1) / 2) * 15) + '">' + esc(l) + '</text>'; });
+      if (n.kind === 'sec' && n.more && !n.kids.length) svg += '<text class="more" x="' + (n.x + n.w + 10) + '" y="' + (n.y + 4) + '">+' + n.more + '</text>';
+      svg += '</g>';
+    });
+    svg += '</svg>';
+    var h = '<div class="page wide"><div class="crumbs"><a href="#/carte">Cartes mentales</a> / <a href="#/theme/' + tid + '">' + esc(th.short) + '</a></div><h1 class="title">' + esc(th.name) + '</h1>';
+    h += '<p class="lede">Cliquez sur une fiche pour déplier ses parties, sur une partie pour l’ouvrir. Les carrés reprennent la couleur de la carte de fixation.</p><div class="row"><button class="btn" id="mall">Tout déplier</button><button class="btn" id="mnone">Tout replier</button><a class="btn" href="#/theme/' + tid + '">Liste des fiches</a></div>';
+    main.innerHTML = h + '<div class="mapwrap">' + svg + '</div></div>';
+    $$('.mindmap [data-tog]').forEach(function (g) { var f = g.getAttribute('data-tog'); var tg = function () { mapOpen[tid][f] = !mapOpen[tid][f]; pageCarte(tid); }; g.addEventListener('click', tg); g.addEventListener('keydown', function (e) { if (e.key === 'Enter') tg(); }); });
+    $$('.mindmap [data-sec]').forEach(function (g) {
+      var go = function (e) { var sub = g.getAttribute('data-sub'); if (sub && e && e.target && e.target.classList.contains('more')) { mapOpen[tid][sub] = true; pageCarte(tid); return; } location.hash = '#/fiche/' + g.getAttribute('data-f') + '?sec=' + encodeURIComponent(g.getAttribute('data-sec')); };
+      g.addEventListener('click', go); g.addEventListener('keydown', function (e) { if (e.key === 'Enter') go(); });
+    });
+    $('#mall').addEventListener('click', function () { th.all.forEach(function (f) { mapOpen[tid][f] = true; }); pageCarte(tid); });
+    $('#mnone').addEventListener('click', function () { mapOpen[tid] = {}; pageCarte(tid); });
+  }
+
   /* ------------------------------------------------------------------ écran de connexion et d'inscription */
   var authBox = $('#auth');
   function lastTxt(pr) { return pr.last ? (pr.last === today() ? 'dernière séance aujourd’hui' : 'dernière séance le ' + fdate(pr.last).replace(/\.$/, '')) : 'jamais ouvert'; }
@@ -1668,12 +1979,72 @@
     r.readAsText(file);
   }
 
+  /* ------------------------------------------------------------------ appli installable et hors ligne */
+  var pwa = { prompt: null, media: null, est: null };
+  var ONLINE_SITE = /^https?:$/.test(location.protocol) && 'serviceWorker' in navigator && (location.protocol === 'https:' || /^(localhost|127\.0\.0\.1)$/.test(location.hostname));
+  var IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  function standalone() { return (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true; }
+  function scanUrls() { var seen = {}, out = []; ORDER.forEach(function (fid) { var sc = F[fid].scan; if (sc) sc[1].forEach(function (n) { var u = scanSrc(sc[0], n); if (!seen[u]) { seen[u] = 1; out.push(u); } }); }); return out; }
+  if (ONLINE_SITE) {
+    var hadCtl = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js').catch(function () { /* hors ligne indisponible */ });
+    navigator.serviceWorker.addEventListener('controllerchange', function () { if (hadCtl) showUpdate(); hadCtl = true; renderOffline(); });
+    navigator.serviceWorker.addEventListener('message', function (e) { var d = e.data || {}; if (d.type === 'cache-media') { pwa.media = d; if (d.fin) pwa.est = null; renderOffline(); } });
+  }
+  window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); pwa.prompt = e; renderInstall(); renderOffline(); });
+  window.addEventListener('appinstalled', function () { pwa.prompt = null; renderInstall(); renderOffline(); });
+  function showUpdate() {
+    if ($('#upd')) return; var d = document.createElement('div'); d.className = 'toast'; d.id = 'upd'; d.setAttribute('role', 'status');
+    d.innerHTML = '<span>Nouvelle version du site installée.</span><button class="btn primary" id="updgo">Recharger</button><button class="btn" id="updno">Plus tard</button>';
+    document.body.appendChild(d); $('#updgo').onclick = function () { location.reload(); }; $('#updno').onclick = function () { d.remove(); };
+  }
+  function doInstall() { if (!pwa.prompt) return; var pr = pwa.prompt; pr.prompt(); (pr.userChoice || Promise.resolve()).then(function () { pwa.prompt = null; renderInstall(); renderOffline(); }); }
+  function renderInstall() {
+    var el = $('#instl'); if (!el) return;
+    var show = ONLINE_SITE && !standalone() && (pwa.prompt || IOS);
+    el.hidden = !show; if (!show) return;
+    el.innerHTML = pwa.prompt ? '<button class="linkbtn" id="binst">Installer l’appli sur cet appareil</button>' : '<a href="#/donnees?appli=1">Installer l’appli sur l’iPhone</a>';
+    var b = $('#binst'); if (b) b.onclick = doInstall;
+  }
+  function renderOffline() {
+    var el = $('#offline'); if (!el) return;
+    var h = '';
+    if (!ONLINE_SITE) {
+      h = '<p class="small">Vous utilisez la copie enregistrée sur l’ordinateur : elle marche déjà sans internet. Pour installer l’appli sur un téléphone, ouvrez le site en ligne (revision-dems.vercel.app) sur le téléphone.</p>';
+      return (el.innerHTML = h);
+    }
+    var ready = !!navigator.serviceWorker.controller;
+    h += '<p class="small">' + (standalone() ? 'Vous utilisez l’appli installée. ' : '') + (ready ? '<b>Hors ligne : prêt.</b> Fiches, questions, cas et réglages s’ouvrent sans connexion sur cet appareil.' : 'Préparation du mode hors ligne… Il sera prêt à la prochaine ouverture du site.') + '</p>';
+    if (!standalone()) {
+      if (pwa.prompt) h += '<div class="row"><button class="btn primary" id="binst2">Installer l’appli</button></div>';
+      else if (IOS) h += '<ol class="small steps"><li>Ouvrez ce site dans <b>Safari</b>.</li><li>Touchez le bouton <b>Partager</b> (carré avec une flèche vers le haut).</li><li>Choisissez <b>« Sur l’écran d’accueil »</b>, puis <b>Ajouter</b>.</li></ol>';
+      else h += '<p class="small muted">Pour l’installer : menu du navigateur, puis « Installer l’application » ou « Ajouter à l’écran d’accueil ».</p>';
+    }
+    if (IOS) h += '<p class="small muted">Sur iPhone et iPad, l’appli installée garde ses données à part de Safari : avant de passer à l’appli, faites « Transférer mon profil » ici, puis « Importer un profil » sur l’écran de connexion de l’appli.</p>';
+    var urls = scanUrls(), m = pwa.media;
+    h += '<p class="small">Les pages manuscrites et les PDF déjà ouverts restent disponibles hors ligne. Vous pouvez aussi télécharger d’un coup toutes les pages manuscrites.</p>';
+    h += '<div class="row"><button class="btn" id="bmedia"' + (!ready || (m && !m.fin) ? ' disabled' : '') + '>' + (m && !m.fin ? 'Téléchargement : ' + (m.done + m.fail) + ' / ' + m.total : m && m.fin ? 'Pages manuscrites téléchargées' + (m.fail ? ' (' + m.fail + ' échecs : relancez)' : '') : 'Télécharger les ' + urls.length + ' pages manuscrites (≈ 70 Mo)') + '</button><span class="small muted" id="est"></span></div>';
+    h += '<p class="small muted">La dictée vocale a besoin d’internet. La lecture à voix haute marche hors ligne si une voix française est installée sur l’appareil.</p>';
+    el.innerHTML = h;
+    var b2 = $('#binst2'); if (b2) b2.onclick = doInstall;
+    var bm = $('#bmedia'); if (bm) bm.onclick = function () {
+      if (!navigator.serviceWorker.controller) return;
+      if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+      pwa.media = { done: 0, fail: 0, total: urls.length, fin: false }; renderOffline();
+      navigator.serviceWorker.controller.postMessage({ type: 'cache-media', urls: urls });
+    };
+    if (navigator.storage && navigator.storage.estimate) {
+      if (pwa.est !== null) $('#est').textContent = pwa.est;
+      else navigator.storage.estimate().then(function (e) { pwa.est = 'Espace utilisé : ' + Math.round((e.usage || 0) / 1e6) + ' Mo'; var x = $('#est'); if (x) x.textContent = pwa.est; });
+    }
+  }
+
   /* ------------------------------------------------------------------ démarrage */
   function locked() { return document.body.classList.contains('locked'); }
   var booted = false;
   function boot() {
     load(); setTheme();
-    if (!booted) { booted = true; renderPomo(); }
+    if (!booted) { booted = true; renderPomo(); renderInstall(); }
     route();
   }
   window.addEventListener('hashchange', function () { if (!locked()) route(); });
