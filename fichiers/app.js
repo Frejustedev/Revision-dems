@@ -178,6 +178,7 @@
     ].concat((function () { var fp = featuredProg(); if (!fp) return []; var i = progDayIdx(fp.p); return [['#/programme/' + fp.p.id, fp.p.court || fp.p.titre, fp.st === 0 ? 'jour ' + (i + 1) + '/' + fp.p.jours.length : fp.st === 1 ? 'bientôt' : 'fini']]; })(), [
       ['#/revision', 'Réviser les questions', due ? due : ''],
       ['#/qcm', 'QCM', D.qcm.length],
+      ['#/ouvertes', 'Questions ouvertes', (D.ouvertes || []).length || ''],
       ['#/examen', 'Examen blanc', exam && !exam.done ? 'en cours' : ''],
       ['#/sujets', 'Sujets rédactionnels', Object.keys(SUJ).length],
       ['#/chiffres', 'Chiffres', ''],
@@ -264,6 +265,7 @@
     var lf = learnedFiches().length, sc = lf ? 'apprises' : 'tout';
     h += '<h2 class="sec">S’entraîner</h2><div class="train">' +
       '<a class="tile" href="#/qcm?s=' + sc + '&n=20&go=1"><b>20 QCM</b><span>' + (lf ? 'sur vos fiches apprises' : 'au hasard dans toutes les fiches') + '</span></a>' +
+      ((D.ouvertes || []).length ? '<a class="tile" href="#/ouvertes?s=' + sc + '&n=10&go=1"><b>10 questions ouvertes</b><span>réponse écrite ou dictée, points clés</span></a>' : '') +
       '<a class="tile" href="#/sujet/' + pickSujet(sc) + '"><b>Un sujet rédactionnel</b><span>plan en temps limité, puis plan attendu</span></a>' +
       '<a class="tile" href="#/examen"><b>Examen blanc</b><span>QCM chronométrés, note sur 20</span></a>' +
       '<a class="tile" href="#/chiffres?portee=' + (lf ? 'apprises' : 'tout') + '&mode=qcm"><b>Chiffres en QCM</b><span>énergies, activités, délais, seuils</span></a></div>';
@@ -285,6 +287,8 @@
       '<li><b>Apprendre</b> : ouvrez la fiche proposée, lisez « À retenir », puis la fiche. Tranchez les mentions [à vérifier] au fur et à mesure.</li>' +
       '<li><b>Comparer</b> : un doute sur une valeur ou un mot déduit ? Le bouton « Manuscrit » (ou la vignette à droite du titre) ouvre vos pages d’origine à côté de la fiche.</li>' +
       '<li><b>Réciter</b> : activez le mode plan, récitez chaque partie de tête, cliquez sur le titre pour vérifier.</li>' +
+      '<li><b>Écouter</b> : le bouton « Écouter » d’une fiche la lit à voix haute (toute la fiche, « À retenir » seul, ou questions et réponses) ; cliquez sur un paragraphe pour y sauter. Dans un programme, « Écouter les « À retenir » » enchaîne les encadrés du jour.</li>' +
+      '<li><b>Répondre à l’oral</b> : dans « Questions ouvertes », dictez votre réponse (Chrome, Edge ou Safari) puis comparez-la à la réponse attendue ; les points clés cités sont cochés tout seuls.</li>' +
       '<li><b>Valider</b> : cliquez sur « J’ai appris cette fiche ». Ses questions entrent dans la révision espacée et des relectures sont prévues à J+1, J+7 et J+21.</li>' +
       '<li><b>Réviser chaque jour</b> : faites les questions arrivées à échéance et 10 minutes de chiffres. La carte de fixation chauffe à mesure que vous maîtrisez.</li>' +
       '<li><b>Sauvegarder et changer d’appareil</b> : chaque collègue a son profil sur l’appareil où il l’a créé. « Transférer mon profil » (Réglages et sauvegarde) crée un fichier à importer sur un autre appareil ; gardez-en une copie de temps en temps.</li></ol></details>';
@@ -379,7 +383,7 @@
     var idx = TREE_ORDER.indexOf(fid), prev = TREE_ORDER[idx - 1], next = TREE_ORDER[idx + 1];
     var h = '<div class="page">';
     h += '<div class="crumbs"><a href="#/theme/' + t.id + '">' + esc(c.name) + (c.themes.length > 1 ? ' / ' + esc(t.short) : '') + '</a>' + (f.group ? ' / ' + esc(f.group) : '') + '</div>';
-    h += '<div class="fiche-head"><div><h1 class="title">' + f.th + '</h1><div class="meta">' + (f.src === 'Synthèse transversale' ? 'Synthèse construite à partir de toutes vos fiches. Les mentions « réf. » sont des compléments absents de vos notes' : 'Notes manuscrites « ' + esc(f.src) + ' », pages ' + esc(f.pages.replace(/-/g, '–'))) + (f.sub ? '. ' + esc(f.sub) : '.') + (f.pdf ? ' <a class="pdfl" target="_blank" href="' + f.pdf + '">Fiche en PDF</a>' : '') + '</div></div>' +
+    h += '<div class="fiche-head"><div><h1 class="title">' + f.th + '</h1><div class="meta">' + (f.theme === 'rappels' ? 'Rappels de référence, absents de vos notes, relus pour l’examen ; les liens renvoient aux fiches où ils servent' : f.src === 'Synthèse transversale' ? 'Synthèse construite à partir de toutes vos fiches. Les mentions « réf. » sont des compléments absents de vos notes' : 'Notes manuscrites « ' + esc(f.src) + ' », pages ' + esc(f.pages.replace(/-/g, '–'))) + (f.sub ? '. ' + esc(f.sub) : '.') + (f.pdf ? ' <a class="pdfl" target="_blank" href="' + f.pdf + '">Fiche en PDF</a>' : '') + '</div></div>' +
       (f.scan ? '<button class="thumb" id="bthumb" title="Voir les pages manuscrites d’origine"><span class="stack"><img src="' + scanSrc(f.scan[0], f.scan[1][0]) + '" alt="" loading="lazy"></span><b>' + plural(f.scan[1].length, 'page') + ' du cahier</b></button>' : '') + '</div>';
     h += '<div class="toolbar row">';
     h += st.learned ? '<span class="status learned">Apprise le ' + fdate(st.learned) + '</span>' : '<button class="btn primary" id="blearn">J’ai appris cette fiche</button>';
@@ -388,15 +392,16 @@
     h += '</span><span class="tgroup">';
     if (f.cards.length) h += '<a class="btn" href="#/revision?f=' + fid + '">Questions (' + f.cards.length + ')</a>';
     if ((QBYF[fid] || []).length) h += '<a class="btn" href="#/qcm?s=f:' + fid + '&n=tout&go=1">QCM (' + QBYF[fid].length + ')</a>';
+    if ((OBYF[fid] || []).length) h += '<a class="btn" href="#/ouvertes?s=f:' + fid + '&n=tout&go=1">Ouvertes (' + OBYF[fid].length + ')</a>';
     (SBYF[fid] || []).slice(0, 1).forEach(function (sid) { h += '<a class="btn" href="#/sujet/' + sid + '">Sujet</a>'; });
-    h += '</span><span class="tgroup">';
+    h += '</span><span class="tgroup"><details class="ecoute"><summary class="btn">Écouter</summary><div class="pop"><button data-m="all">Toute la fiche</button><button data-m="cle">« À retenir » seulement</button><button data-m="qr">Questions et réponses</button></div></details>';
     if (f.scan) h += '<button class="btn" id="bscan" aria-pressed="false" aria-controls="scans">Manuscrit</button>';
     h += '</span>';
     var rr = rereadsDue().filter(function (r) { return r.f === fid; })[0];
     if (rr) h += '<button class="btn" id="breread">Relecture J+' + rr.step + ' faite</button>';
     h += '</div><p class="status planhint" id="planhint" hidden>Récitez chaque partie de tête, puis cliquez sur son titre pour vérifier.</p>';
     h += '<article class="fiche" id="art">' + f.html + '</article>';
-    h += '<div class="notes"><label for="notes"><b>Mes notes</b> <span class="muted small">(corrections après vérification, moyens mnémotechniques…)</span></label><textarea id="notes">' + esc(st.notes || '') + '</textarea></div>';
+    h += '<div class="notes"><label for="notes"><b>Mes notes</b> <span class="muted small">(corrections après vérification, moyens mnémotechniques…)</span></label><textarea id="notes">' + esc(st.notes || '') + '</textarea><div class="row"><button class="btn" id="ndict">Dicter une note</button><span class="status" id="ndst"></span></div></div>';
     h += '<div class="pager">' + (prev ? '<a href="' + link(prev) + '">Précédente : ' + F[prev].th + '</a>' : '<span></span>') + (next ? '<a href="' + link(next) + '" style="text-align:right">Suivante : ' + F[next].th + '</a>' : '') + '</div>';
     h += '</div>';
     main.innerHTML = h;
@@ -425,9 +430,11 @@
     art.addEventListener('click', function (e) { var td = e.target.closest('td.cellhide'); if (td) td.classList.remove('cellhide'); });
     [$('#bscan'), $('#bthumb')].forEach(function (b) { if (b) b.addEventListener('click', function () { if (scanFid === fid && !$('#scans').hidden) closeScans(); else openScans(fid); }); });
     if (f.scan && scanFid && !$('#scans').hidden) openScans(fid, true); else if (scanFid) closeScans(true);
+    $$('.ecoute .pop button').forEach(function (b) { b.addEventListener('click', function () { b.closest('details').open = false; ficheAudio(fid, b.dataset.m, art); }); });
+    art.addEventListener('click', function (e) { if (!tts) return; var el = e.target.closest('h2, h3, h4, p, li, tr'); if (!el) return; for (var i = 0; i < tts.blocks.length; i++) if (tts.blocks[i].el === el) { ttsJump(i); return; } });
     var bl = $('#blearn'); if (bl) bl.addEventListener('click', function () { learnFiche(fid); route(); });
     var br = $('#breread'); if (br) br.addEventListener('click', function () { var s = mem.fiches[fid]; s.rereads = (s.rereads || []).concat([today()]); logToday('reread'); save(); route(); });
-    var nt = $('#notes'), timer = null;
+    var nt = $('#notes'), timer = null; attachDictation(nt, $('#ndict'), $('#ndst'));
     nt.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(function () { mem.fiches[fid] = Object.assign(mem.fiches[fid] || {}, { notes: nt.value }); save(); }, 400); });
     var ptarget = params && (params.hl || params.sec) ? progFicheExtras(fid, params, art) : null;
     if (anchor) { var a = document.getElementById(anchor); if (a) { a.scrollIntoView({ block: 'center' }); a.classList.add('flash'); } }
@@ -945,6 +952,7 @@
     var h = '<div class="page"><div class="crumbs"><a href="#/sujets">Sujets rédactionnels</a> / <a href="' + link(s.f) + '">' + F[s.f].th + '</a></div><h1 class="title">' + qt(s.sujet) + '</h1>';
     h += '<div class="row"><span class="timer num" id="stime">' + s.duree + ':00</span><button class="btn" id="sstart">Lancer le chrono (' + s.duree + ' min)</button><span class="muted small">Rédigez votre plan détaillé : parties, sous-parties, chiffres clés.</span></div>';
     h += '<textarea class="draft" id="sdraft" placeholder="I. Introduction&#10;   - …&#10;II. …">' + esc(st.draft || '') + '</textarea>';
+    h += '<div class="row"><button class="btn" id="sdict">Dicter</button><span class="status" id="sdst"></span></div>';
     h += '<div class="row"><button class="btn primary" id="sreveal">Afficher le plan attendu</button><a class="btn" href="#/sujet/' + pickSujet('apprises') + '">Autre sujet</a></div>';
     h += '<div id="splan" hidden><h2 class="sec">Plan attendu : cochez ce que vous aviez</h2><div class="plancheck">' + s.plan.map(function (p, i) {
       return '<div class="pp"><b>' + qt(p.partie) + '</b><ul>' + p.points.map(function (pt, j) { return '<li><label><input type="checkbox" data-k="' + i + '-' + j + '"> ' + qt(pt) + '</label></li>'; }).join('') + '</ul></div>';
@@ -952,6 +960,7 @@
     if (st.tries.length) h += '<p class="small muted">Essais précédents : ' + st.tries.map(function (t) { return fdate(t.d) + ' (' + Math.round(100 * t.s / t.m) + ' %)'; }).join(', ') + '.</p>';
     main.innerHTML = h + '</div>';
     var ta = $('#sdraft'), tmo; ta.addEventListener('input', function () { clearTimeout(tmo); tmo = setTimeout(function () { st.draft = ta.value; save(); }, 400); });
+    attachDictation(ta, $('#sdict'), $('#sdst'));
     clearInterval(sujTimer);
     function startTimer() {
       var end = Date.now() + s.duree * 60000; $('#sstart').disabled = true;
@@ -1142,7 +1151,10 @@
     if (primary && first) h += '<a class="btn primary" href="' + itemHref(p, first) + '">Ouvrir la prochaine fiche</a>';
     if (nq) h += '<a class="btn" href="#/qcm?s=' + sc + '&n=tout&go=1">QCM du jour (' + nq + ')</a>';
     if (nc) h += '<a class="btn" href="#/revision?p=' + p.id + ':' + d + '">Questions (' + nc + ')</a>';
+    var no = progOuv(p, d).length;
+    if (no) h += '<a class="btn" href="#/ouvertes?s=' + sc + '&n=10&go=1">Questions ouvertes (' + no + ')</a>';
     if (nz) h += '<a class="btn" href="#/chiffres?portee=' + sc + '&mode=qcm">Chiffres (' + nz + ')</a>';
+    h += '<button class="btn" data-cle="' + p.id + ':' + d + '">Écouter les « À retenir »</button>';
     if (ss.length) h += '<a class="btn" href="#/sujet/' + pickFrom(ss) + '">Sujet rédactionnel</a>';
     if (p.jours[d].examen) h += '<a class="btn' + (primary && !first ? ' primary' : '') + '" href="#/examen?s=p:' + p.id + '">Examen blanc du programme</a>';
     return h + '</div>';
@@ -1272,6 +1284,8 @@
     if (r.name !== 'qcm') quiz = null;
     if (r.name !== 'sujet') clearInterval(sujTimer);
     if (r.name !== 'fiche' && scanFid) closeScans(true);
+    if (tts && tts.blocks.some(function (b) { return b.el; })) ttsStop();
+    if (r.name !== 'ouvertes') oq = null;
     switch (r.name) {
       case 'fiche': pageFiche(r.arg, r.params.ancre, r.params); break;
       case 'programme': pageProgramme(r.arg); break;
@@ -1281,6 +1295,7 @@
       case 'recherche': pageSearch(r.params.q); break;
       case 'a-verifier': pageVerif(r.params); break;
       case 'qcm': pageQcm(r.params); break;
+      case 'ouvertes': pageOuvertes(r.params); break;
       case 'examen': pageExamen(r.params); break;
       case 'sujets': pageSujets(r.params); break;
       case 'sujet': pageSujet(r.arg, r.params); break;
@@ -1292,11 +1307,263 @@
       default: pageToday();
     }
     renderSide(r);
-    var titles = { fiche: r.arg && F[r.arg] ? F[r.arg].title : '', revision: 'Révision', chiffres: 'Chiffres', recherche: 'Recherche', 'a-verifier': 'À vérifier', planning: 'Planning', donnees: 'Réglages', qcm: 'QCM', examen: 'Examen blanc', sujets: 'Sujets rédactionnels', sujet: 'Sujet', erreurs: 'Carnet d’erreurs', stats: 'Statistiques', pdf: 'PDF', programme: 'Programme' };
+    var titles = { fiche: r.arg && F[r.arg] ? F[r.arg].title : '', revision: 'Révision', chiffres: 'Chiffres', recherche: 'Recherche', 'a-verifier': 'À vérifier', planning: 'Planning', donnees: 'Réglages', qcm: 'QCM', ouvertes: 'Questions ouvertes', examen: 'Examen blanc', sujets: 'Sujets rédactionnels', sujet: 'Sujet', erreurs: 'Carnet d’erreurs', stats: 'Statistiques', pdf: 'PDF', programme: 'Programme' };
     document.title = (titles[r.name] ? titles[r.name] + ' – ' : '') + 'Révision DEMS';
     if (r.name !== 'fiche' && r.name !== 'revision' && r.name !== 'chiffres') window.scrollTo(0, 0);
   }
 
+
+
+  /* ================================================================== QUESTIONS OUVERTES (réponse écrite ou dictée) */
+  var OUV = {}, OBYF = {};
+  (D.ouvertes || []).forEach(function (o) { OUV[o.id] = o; (OBYF[o.f] = OBYF[o.f] || []).push(o.id); });
+  var TYPEL = { courte: 'Question courte', moyenne: 'Question moyenne', longue: 'Question longue' };
+  function ouvPool(s, ty) {
+    var out = [];
+    mem.ouv = mem.ouv || {};
+    if (s === 'erreurs') out = Object.keys(mem.ouv).filter(function (id) { return OUV[id] && mem.ouv[id].last < .6; });
+    else if (s && s.indexOf('p:') === 0) { var pp = parseP(s); out = pp.p ? progOuv(pp.p, pp.d) : []; }
+    else scopeFiches(s).forEach(function (f) { out = out.concat(OBYF[f] || []); });
+    if (ty && ty !== 'toutes') out = out.filter(function (id) { return OUV[id].type === ty; });
+    return out;
+  }
+  function progOuv(p, d) { var out = []; progItems(p, d).forEach(function (it) { (OBYF[it.f] || []).forEach(function (id) { var o = OUV[id]; if (out.indexOf(id) < 0 && itemOk(p, it, o.q + ' ' + o.reponse)) out.push(id); }); }); return out; }
+  // comparaison tolérante de la réponse (écrite ou dictée) avec les mots-clés de chaque point
+  function normAns(s) { return ' ' + normalize(String(s)).replace(/pour ?cents?/g, '%').replace(/(\d),(\d)/g, '$1.$2').replace(/[’']/g, ' ').replace(/[^a-z0-9%.\/+\-<>=µ ]+/g, ' ').replace(/\s+/g, ' ').trim() + ' '; }
+  function hasMot(ans, m) {
+    var n = normAns(m).trim(); if (!n) return false;
+    if (/^[0-9.]+$/.test(n)) return new RegExp('(^|[^0-9.])' + n.replace(/\./g, '\\.') + '([^0-9]|$)').test(ans);
+    if (ans.indexOf(n) >= 0 || ans.replace(/ /g, '').indexOf(n.replace(/ /g, '')) >= 0) return true;
+    // mot isolé : on tolère une autre terminaison (hydrate / hydratation, obstructif / obstruction)
+    if (/^[a-z]{5,}$/.test(n)) return ans.split(' ').some(function (w) { var k = 0; while (k < w.length && k < n.length && w[k] === n[k]) k++; return k >= 5 && k >= Math.min(w.length, n.length) - 2; });
+    return false;
+  }
+  function pointHit(ans, pt) { return pt.mots.some(function (m) { return hasMot(ans, m); }); }
+  function fmtAnswer(txt) {
+    var h = '', inList = false;
+    String(txt).split(/\n+/).forEach(function (l) {
+      l = l.trim(); if (!l) return;
+      if (/^[-•–]\s+/.test(l)) { if (!inList) { h += '<ul>'; inList = true; } h += '<li>' + qt(l.replace(/^[-•–]\s+/, '')) + '</li>'; return; }
+      if (inList) { h += '</ul>'; inList = false; }
+      h += /:$/.test(l) && l.length < 90 ? '<p class="ohead">' + qt(l) + '</p>' : '<p>' + qt(l) + '</p>';
+    });
+    return h + (inList ? '</ul>' : '');
+  }
+  var oq = null;
+  function pageOuvertes(params) {
+    var s = params.s, go = params.go, key = s + '|' + (params.t || '') + '|' + (params.n || '');
+    if (s && go && (!oq || oq.key !== key)) {
+      var pool = shuffle(ouvPool(s, params.t)), n = params.n === 'tout' ? pool.length : Math.min(pool.length, +(params.n || 10));
+      oq = { key: key, scope: s, list: pool.slice(0, n), i: 0, shown: false, ans: '', res: [] };
+    }
+    if (!oq || !s || !go) return ouvConfig(params);
+    renderOuv();
+  }
+  function ouvConfig(params) {
+    var learnedN = learnedFiches().length, errN = ouvPool('erreurs').length;
+    var h = '<div class="page"><h1 class="title">Questions ouvertes</h1><p class="lede">' + plural(D.ouvertes.length, 'question') + ' à réponse rédigée : courtes (une ligne), moyennes (un paragraphe) et longues (une mini-rédaction). Répondez par écrit ou à voix haute, puis comparez à la réponse attendue : les points clés que vous avez cités sont cochés automatiquement.</p>';
+    h += '<div class="panel"><div class="grid2"><label class="field"><b>Sur quoi ?</b>' + scopeSelect('os', params.s || (learnedN ? 'apprises' : 'tout')) + '</label>' +
+      '<label class="field"><b>Longueur</b><select class="field-in" id="ot"><option value="toutes">Toutes</option><option value="courte">Courtes</option><option value="moyenne">Moyennes</option><option value="longue">Longues</option></select></label>' +
+      '<label class="field"><b>Combien ?</b><select class="field-in" id="on"><option>5</option><option selected>10</option><option>20</option><option value="tout">Tout</option></select></label></div>';
+    h += '<div class="row" style="margin-top:14px"><button class="btn primary" id="ogo">Commencer</button><button class="btn" id="olisten">Mode écoute</button><span class="muted small" id="ocount"></span></div>';
+    h += '<p class="small muted" style="margin:8px 0 0">Mode écoute : le site lit la question, vous laisse le temps de répondre dans votre tête, puis lit la réponse attendue. Pratique dans les transports.</p></div>';
+    if (errN) h += '<div class="row" style="margin-top:14px"><a class="btn" href="#/ouvertes?s=erreurs&n=tout&go=1">Refaire mes ' + plural(errN, 'question ratée', 'questions ratées') + ' (moins de 60 %)</a></div>';
+    h += '<h2 class="sec">Par thème</h2><table class="plain"><thead><tr><th>Thème</th><th class="n">Questions</th><th class="n">Faites</th><th class="n">Score moyen</th><th></th></tr></thead><tbody>';
+    D.cats.forEach(function (c) {
+      c.themes.forEach(function (t) {
+        var ids = ouvPool('t:' + t.id); if (!ids.length) return;
+        var done = ids.filter(function (id) { return mem.ouv[id]; }), avg = done.length ? Math.round(100 * done.reduce(function (a, id) { return a + mem.ouv[id].last; }, 0) / done.length) + ' %' : '–';
+        h += '<tr><td>' + esc(t.name) + '</td><td class="n">' + ids.length + '</td><td class="n">' + done.length + '</td><td class="n">' + avg + '</td><td><a href="#/ouvertes?s=t:' + t.id + '&n=10&go=1">10 questions</a></td></tr>';
+      });
+    });
+    main.innerHTML = h + '</tbody></table></div>';
+    function upd() { $('#ocount').textContent = plural(ouvPool($('#os').value, $('#ot').value).length, 'question disponible', 'questions disponibles') + '.'; }
+    ['os', 'ot'].forEach(function (id) { $('#' + id).addEventListener('change', upd); }); upd();
+    $('#ogo').addEventListener('click', function () { oq = null; location.hash = '#/ouvertes?s=' + encodeURIComponent($('#os').value) + '&t=' + $('#ot').value + '&n=' + $('#on').value + '&go=1'; });
+    $('#olisten').addEventListener('click', function () {
+      var ids = shuffle(ouvPool($('#os').value, $('#ot').value)); var n = $('#on').value === 'tout' ? ids.length : +$('#on').value;
+      ttsOpen(qaBlocks(ids.slice(0, n).map(function (id) { var o = OUV[id]; return { q: o.q, a: o.reponse, wait: Math.min(20, 4 + 2 * (o.duree || 2)), label: TYPEL[o.type] + ' : ' + F[o.f].title }; })), 'Mode écoute : questions ouvertes');
+    });
+  }
+  function renderOuv() {
+    var z = oq, h = '<div class="page"><h1 class="title">Questions ouvertes : ' + esc(scopeLabel(z.scope)) + '</h1>';
+    if (!z.list.length) { main.innerHTML = h + '<div class="empty">Aucune question ouverte dans cette sélection pour l’instant. <a href="#/ouvertes">Choisir une autre sélection</a></div></div>'; return; }
+    if (z.i >= z.list.length) return ouvEnd();
+    var o = OUV[z.list[z.i]];
+    h += '<div class="muted small">' + (z.i + 1) + ' sur ' + z.list.length + (z.res.length ? ', score moyen ' + Math.round(100 * z.res.reduce(function (a, b) { return a + b; }, 0) / z.res.length) + ' %' : '') + '</div><div class="progress"><span style="width:' + Math.round(100 * z.i / z.list.length) + '%"></span></div>';
+    h += '<div class="card ouv"><div class="src"><a href="' + link(o.f) + '">' + F[o.f].th + '</a><span class="muted">, ' + TYPEL[o.type].toLowerCase() + ', environ ' + plural(o.duree || 2, 'minute') + '</span></div>';
+    h += '<div class="q">' + qt(o.q) + '</div>';
+    if (!z.shown) {
+      h += '<textarea class="draft" id="oans" placeholder="Votre réponse, écrite ou dictée…">' + esc(z.ans) + '</textarea>';
+      h += '<div class="row"><button class="btn" id="odict">Dicter ma réponse</button><button class="btn" id="oread">Écouter la question</button><span class="status" id="odst"></span></div>';
+      h += '<div class="row actions"><button class="btn primary" id="oshow">Voir la réponse attendue</button><button class="btn" id="oskip">Passer</button></div>';
+    } else {
+      var ans = normAns(z.ans), hits = o.points.map(function (pt) { return pointHit(ans, pt); });
+      if (z.ans.trim()) h += '<div class="oyours"><b>Votre réponse</b><p>' + esc(z.ans).replace(/\n/g, '<br>') + '</p></div>';
+      h += '<div class="omodel"><div class="ohd"><b>Réponse attendue</b><button class="linkbtn" id="oreadans">Écouter</button></div>' + fmtAnswer(o.reponse) + '</div>';
+      h += '<div class="opoints"><b>Points clés</b> <span class="muted small" id="oscore"></span><p class="small muted">' + (z.ans.trim() ? 'Cochés automatiquement quand vos mots les citent : corrigez si besoin.' : 'Cochez ceux que vous aviez en tête.') + '</p><ul>' +
+        o.points.map(function (pt, i) { return '<li><label><input type="checkbox" data-i="' + i + '"' + (hits[i] ? ' checked' : '') + '> ' + qt(pt.p) + '</label></li>'; }).join('') + '</ul></div>';
+      h += '<div class="row actions"><button class="btn primary" id="onext">' + (z.i + 1 < z.list.length ? 'Question suivante' : 'Terminer') + '</button></div>';
+    }
+    main.innerHTML = h + '</div></div>';
+    if (!z.shown) {
+      var ta = $('#oans'); ta.addEventListener('input', function () { z.ans = ta.value; });
+      var stopD = attachDictation(ta, $('#odict'), $('#odst'));
+      $('#oread').addEventListener('click', function () { ttsOpen([{ text: o.q }], 'Question'); });
+      $('#oshow').addEventListener('click', function () { if (stopD) stopD(); z.ans = ta.value; z.shown = true; renderOuv(); });
+      $('#oskip').addEventListener('click', function () { if (stopD) stopD(); z.i++; z.ans = ''; z.shown = false; renderOuv(); });
+      ta.focus();
+    } else {
+      var upd = function () { var c = $$('.opoints input:checked').length; $('#oscore').textContent = c + ' sur ' + o.points.length + ' (' + Math.round(100 * c / o.points.length) + ' %)'; };
+      $$('.opoints input').forEach(function (cb) { cb.addEventListener('change', upd); }); upd();
+      $('#oreadans').addEventListener('click', function () { ttsOpen([{ text: 'Réponse attendue. ' + o.reponse }], 'Réponse attendue'); });
+      $('#onext').addEventListener('click', function () {
+        var sc = $$('.opoints input:checked').length / o.points.length, k = mem.ouv[o.id] || { n: 0, best: 0 };
+        k.n++; k.last = sc; k.best = Math.max(k.best, sc); k.d = today(); mem.ouv[o.id] = k; logToday('ouv'); save();
+        z.res.push(sc); z.i++; z.ans = ''; z.shown = false; ttsStop(); renderOuv(); window.scrollTo(0, 0);
+      });
+    }
+  }
+  function ouvEnd() {
+    var z = oq, avg = z.res.length ? Math.round(100 * z.res.reduce(function (a, b) { return a + b; }, 0) / z.res.length) : 0;
+    var h = '<div class="page"><h1 class="title">Questions ouvertes : bilan</h1><p class="lede">' + plural(z.res.length, 'question corrigée', 'questions corrigées') + (z.res.length ? ', ' + avg + ' % des points clés retrouvés en moyenne.' : '.') + '</p>';
+    h += '<div class="list">' + z.list.map(function (id, i) { var o = OUV[id], sc = (mem.ouv[id] || {}).last; return '<div class="it"><span class="num small">' + (sc === undefined ? '–' : Math.round(100 * sc) + ' %') + '</span><div><span class="ttl">' + qt(o.q) + '</span><div class="small muted">' + F[o.f].title + '</div></div></div>'; }).join('') + '</div>';
+    h += '<div class="row" style="margin-top:16px"><a class="btn primary" href="#/ouvertes">Nouvelle série</a>' + (ouvPool('erreurs').length ? '<a class="btn" href="#/ouvertes?s=erreurs&n=tout&go=1">Refaire les questions sous 60 %</a>' : '') + '</div>';
+    main.innerHTML = h + '</div>'; oq = null;
+  }
+
+  /* ------------------------------------------------------------------ dictée vocale (reconnaissance intégrée au navigateur) */
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  function attachDictation(ta, btn, st) {
+    if (!btn) return null;
+    if (!SR) { btn.disabled = true; btn.title = 'Dictée indisponible dans ce navigateur'; if (st) st.textContent = 'Dictée vocale : utilisez Chrome, Edge ou Safari.'; return null; }
+    var rec = null, on = false, base = '', label = btn.textContent;
+    btn.addEventListener('click', function () {
+      if (on) { rec.stop(); return; }
+      rec = new SR(); rec.lang = 'fr-FR'; rec.continuous = true; rec.interimResults = true;
+      base = ta.value ? ta.value.replace(/\s*$/, ' ') : '';
+      rec.onresult = function (e) { var t = ''; for (var i = 0; i < e.results.length; i++) t += e.results[i][0].transcript; ta.value = base + t; ta.dispatchEvent(new Event('input')); ta.scrollTop = ta.scrollHeight; };
+      rec.onerror = function (e) { if (st) st.textContent = e.error === 'not-allowed' || e.error === 'service-not-allowed' ? 'Micro refusé : autorisez-le dans le navigateur.' : e.error === 'network' ? 'La dictée a besoin d’une connexion internet.' : e.error === 'no-speech' ? 'Aucune parole détectée.' : 'Dictée interrompue.'; };
+      rec.onend = function () { on = false; btn.textContent = label; btn.classList.remove('on'); if (st && st.textContent === 'Je vous écoute… parlez normalement.') st.textContent = ''; };
+      try { rec.start(); } catch (err) { if (st) st.textContent = 'Dictée impossible ici.'; return; }
+      on = true; btn.textContent = 'Arrêter la dictée'; btn.classList.add('on'); if (st) st.textContent = 'Je vous écoute… parlez normalement.';
+    });
+    return function () { if (on && rec) rec.stop(); };
+  }
+
+  /* ------------------------------------------------------------------ lecture à voix haute (synthèse vocale du navigateur, hors ligne) */
+  var SYN = window.speechSynthesis, tts = null, ttsVoices = [];
+  var ELEM = { Tc: 'technétium', F: 'fluor', I: 'iode', In: 'indium', Tl: 'thallium', Ga: 'gallium', Ge: 'germanium', Lu: 'lutécium', Y: 'yttrium', Ra: 'radium', Sm: 'samarium', Sr: 'strontium', Cr: 'chrome', Kr: 'krypton', Xe: 'xénon', C: 'carbone', N: 'azote', O: 'oxygène', Rb: 'rubidium', Cu: 'cuivre', Ac: 'actinium', Tb: 'terbium', Pb: 'plomb', Re: 'rhénium', Ho: 'holmium', Er: 'erbium', P: 'phosphore', Mo: 'molybdène', Zr: 'zirconium', Bi: 'bismuth', At: 'astate', Co: 'cobalt', Se: 'sélénium', Fe: 'fer', Na: 'sodium', K: 'potassium', Ba: 'baryum', Cs: 'césium', Gd: 'gadolinium', Te: 'tellure', Zn: 'zinc', Br: 'brome', Yb: 'ytterbium', Dy: 'dysprosium', Ca: 'calcium', Sn: 'étain', Ru: 'ruthénium', Rh: 'rhodium', U: 'uranium' };
+  var UNITS = [[/MBq\s*\/\s*kg/g, 'mégabecquerels par kilo'], [/GBq/g, 'gigabecquerels'], [/MBq/g, 'mégabecquerels'], [/kBq/g, 'kilobecquerels'], [/mCi/g, 'millicuries'], [/µCi/g, 'microcuries'],
+    [/keV/g, 'kilo-électronvolts'], [/MeV/g, 'méga-électronvolts'], [/µSv\s*\/\s*MBq/g, 'microsieverts par mégabecquerel'], [/mSv/g, 'millisieverts'], [/µSv/g, 'microsieverts'], [/mGy/g, 'milligrays'],
+    [/mg\s*\/\s*kg/g, 'milligrammes par kilo'], [/ml\s*\/\s*min\s*\/\s*1[,.]73\s*m[²2]/gi, 'millilitres par minute pour 1,73 mètre carré'], [/ml\s*\/\s*min/gi, 'millilitres par minute'], [/ml\s*\/\s*kg/gi, 'millilitres par kilo'],
+    [/(\d)\s*ml\b/gi, '$1 millilitres'], [/(\d)\s*mg\b/g, '$1 milligrammes'], [/(\d)\s*µg\b/g, '$1 microgrammes'], [/(\d)\s*kg\b/g, '$1 kilos'], [/(\d)\s*cm\b/g, '$1 centimètres'], [/(\d)\s*mm\b/g, '$1 millimètres'],
+    [/(\d)\s*Gy\b/g, '$1 grays'], [/(\d)\s*(min|mn)\b\.?/g, '$1 minutes'], [/(\d)\s*h\b/g, '$1 heures'], [/(\d)\s*j\b/g, '$1 jours'], [/(\d)\s*s\b/g, '$1 secondes'], [/(\d)\s*°C/g, '$1 degrés'],
+    [/T\s*½|T1\/2/g, 'demi-vie'], [/½/g, 'demi'], [/×/g, ' fois '], [/[→⇒➔⟶]/g, ', '], [/≥/g, ' supérieur ou égal à '], [/≤/g, ' inférieur ou égal à '], [/>/g, ' supérieur à '], [/</g, ' inférieur à '],
+    [/±/g, ' plus ou moins '], [/[≈~]/g, ' environ '], [/↑/g, ' augmenté '], [/↓/g, ' diminué '], [/\+\+\+?/g, ''], [/β\s*[-−⁻]/g, 'bêta moins'], [/β\s*\+|β⁺/g, 'bêta plus'], [/β/g, 'bêta'], [/α/g, 'alpha'], [/γ/g, 'gamma'],
+[/²/g, ' au carré'], [/³/g, ' cube'], [/(\d)\s*[–-]\s*(\d)/g, '$1 à $2'], [/\bmin\.\s/g, 'minimum '], [/\bmax\.\s/g, 'maximum '], [/\bcf\.\s/g, 'voir '],
+        [/\bet\s*\/\s*ou\b/g, 'et ou'], [/\bvs\.?\b/g, 'versus'], [/\bcf\.?\s/g, 'voir '], [/\bréf\.\s*$/g, '']];
+  var ISO_RX = /\b(\d{1,3})(m?)(Tc|In|Ga|Ge|Lu|Tl|Xe|Kr|Rb|Sr|Sm|Re|Ra|Ac|Bi|Er|Cr|Co|Cu|Zr|Mo|Te|Tb|At|Ho|Cs|Ba|Gd|Se|Fe|Na|Ca|Br|Zn|Ru|Rh|Pb|Sn|Yb|Dy|Y|I|F|C|N|O|P|K|U)(?![a-z])/g;
+  function speakable(t) {
+    t = String(t).replace(/\s+/g, ' ').replace(/^\s*([IVX]+|[A-H]|\d+)\s*[.)]\s+/, '');
+    t = t.replace(ISO_RX, function (_, n, m, el) { return (ELEM[el] || el) + ' ' + n + (m ? ' m ' : ' '); });
+    UNITS.forEach(function (u) { t = t.replace(u[0], u[1]); });
+    return t.replace(/\s+/g, ' ').trim();
+  }
+  function chunks(t) { // morceaux courts : Chrome coupe les énoncés trop longs
+    var out = [], parts = t.match(/[^.;:!?]+[.;:!?]*\s*/g) || [t], cur = '';
+    parts.forEach(function (p) { if ((cur + p).length > 220 && cur) { out.push(cur); cur = ''; } cur += p; });
+    if (cur.trim()) out.push(cur); return out;
+  }
+  function loadVoices() { if (!SYN) return; ttsVoices = SYN.getVoices().filter(function (v) { return /^fr/i.test(v.lang); }); }
+  if (SYN) { loadVoices(); if (SYN.addEventListener) SYN.addEventListener('voiceschanged', function () { loadVoices(); var sel = $('#pvoice'); if (sel && tts) sel.innerHTML = voiceOptions(); }); }
+  function bestVoice() {
+    var want = (mem && mem.voice) || '', v = ttsVoices.filter(function (x) { return x.name === want; })[0];
+    if (v) return v;
+    var pref = [/natural|online|neural/i, /google/i, /amélie|amelie|thomas|denise|henri|audrey|marie/i];
+    for (var i = 0; i < pref.length; i++) { var m = ttsVoices.filter(function (x) { return pref[i].test(x.name) && /fr-FR/i.test(x.lang); })[0]; if (m) return m; }
+    return ttsVoices.filter(function (x) { return /fr-FR/i.test(x.lang); })[0] || ttsVoices[0] || null;
+  }
+  function voiceOptions() { var b = bestVoice(); return ttsVoices.map(function (v) { return '<option' + (b && v.name === b.name ? ' selected' : '') + '>' + esc(v.name) + '</option>'; }).join('') || '<option>Voix française du système</option>'; }
+  // blocs lisibles d'une fiche : titres, paragraphes, éléments de liste, lignes de tableau (hors « Testez-vous » et sources)
+  function articleBlocks(art, only) {
+    var out = [];
+    $$('h2, h3, h4, p, li, tr', art).forEach(function (el) {
+      if (el.closest('.autotest') || el.closest('figure') || el.classList.contains('sources')) return;
+      if (only === 'cle' && !el.closest('.cle')) return;
+      if (el.tagName === 'LI' && el.querySelector('li')) { var c = el.cloneNode(true); $$('ul, ol', c).forEach(function (x) { x.remove(); }); if (c.textContent.trim()) out.push({ el: el, text: c.textContent }); return; }
+      if (el.tagName === 'P' && el.closest('li, td, th')) return;
+      if (el.tagName === 'TR') {
+        var tb = el.closest('table'), hd = $$('thead th', tb).map(function (x) { return x.textContent.trim(); }), cells = $$('td, th', el).map(function (x) { return x.textContent.trim(); });
+        if (el.parentNode.tagName === 'THEAD') return out.push({ el: el, text: 'Tableau : ' + cells.join(', ') + '.' });
+        return out.push({ el: el, text: cells.map(function (c, i) { return i && hd[i] && hd.length === cells.length ? hd[i] + ' : ' + c : c; }).join('. ') });
+      }
+      var txt = el.textContent; if (el.querySelector && el.querySelector('.chk')) txt = txt.replace(/^/, '');
+      if (txt.trim()) out.push({ el: el, text: txt });
+    });
+    return out;
+  }
+  function qaBlocks(list) { var out = []; list.forEach(function (x, i) { out.push({ text: 'Question ' + (i + 1) + '. ' + x.q, label: x.label, wait: x.wait || 6 }); out.push({ text: 'Réponse. ' + x.a, label: x.label }); }); return out; }
+  function ttsOpen(blocks, title, start) {
+    if (!SYN || !window.SpeechSynthesisUtterance) { alertBar('La lecture à voix haute n’est pas disponible dans ce navigateur.'); return; }
+    ttsStop(true);
+    tts = { blocks: blocks, i: start || 0, title: title, playing: true, token: 0, rate: (mem && mem.rate) || 1 };
+    var bar = $('#player');
+    bar.innerHTML = '<button class="btn primary" id="pplay">Pause</button><button class="btn" id="pprev" aria-label="Passage précédent">Précédent</button><button class="btn" id="pnext" aria-label="Passage suivant">Suivant</button>' +
+      '<span class="pinfo"><b id="ptitle"></b><span id="ppos" class="num"></span></span>' +
+      '<label class="psel">Vitesse <select id="prate">' + [0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.6].map(function (r) { return '<option value="' + r + '"' + (r === tts.rate ? ' selected' : '') + '>' + String(r).replace('.', ',') + '×</option>'; }).join('') + '</select></label>' +
+      '<label class="psel">Voix <select id="pvoice">' + voiceOptions() + '</select></label><button class="btn" id="pclose">Fermer</button>';
+    bar.hidden = false; document.body.classList.add('playing');
+    $('#pplay').onclick = function () { if (!tts) return; if (tts.playing) { tts.playing = false; tts.token++; SYN.cancel(); this.textContent = 'Lire'; } else { tts.playing = true; this.textContent = 'Pause'; ttsSpeak(tts.i); } };
+    $('#pprev').onclick = function () { if (tts) ttsJump(Math.max(0, tts.i - 1)); };
+    $('#pnext').onclick = function () { if (tts) ttsJump(Math.min(tts.blocks.length - 1, tts.i + 1)); };
+    $('#prate').onchange = function () { tts.rate = +this.value; if (mem) { mem.rate = tts.rate; save(); } if (tts.playing) ttsSpeak(tts.i); };
+    $('#pvoice').onchange = function () { if (mem) { mem.voice = this.value; save(); } if (tts.playing) ttsSpeak(tts.i); };
+    $('#pclose').onclick = function () { ttsStop(); };
+    ttsSpeak(tts.i);
+  }
+  function ttsJump(i) { if (!tts) return; tts.playing = true; $('#pplay').textContent = 'Pause'; ttsSpeak(i); }
+  function ttsSpeak(i) {
+    if (!tts) return;
+    SYN.cancel(); var my = ++tts.token;
+    $$('.speaking').forEach(function (e) { e.classList.remove('speaking'); });
+    if (i >= tts.blocks.length) { tts.playing = false; $('#pplay').textContent = 'Lire'; tts.i = 0; $('#ppos').textContent = 'terminé'; return; }
+    tts.i = i; var b = tts.blocks[i];
+    $('#ptitle').textContent = b.label || tts.title || ''; $('#ppos').textContent = (i + 1) + ' / ' + tts.blocks.length;
+    if (b.el) { b.el.classList.add('speaking'); var r = b.el.getBoundingClientRect(); if (r.top < 70 || r.bottom > innerHeight - 90) b.el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+    var parts = chunks(speakable(b.text)), k = 0, v = bestVoice();
+    function next() {
+      if (!tts || my !== tts.token) return;
+      if (k >= parts.length) { if (b.wait) setTimeout(function () { if (tts && my === tts.token) ttsSpeak(i + 1); }, b.wait * 1000); else ttsSpeak(i + 1); return; }
+      var u = new SpeechSynthesisUtterance(parts[k++]); u.lang = v ? v.lang : 'fr-FR'; if (v) u.voice = v; u.rate = tts.rate;
+      u.onend = next; u.onerror = function (e) { if (e.error !== 'interrupted' && e.error !== 'canceled') next(); };
+      SYN.speak(u);
+    }
+    next();
+  }
+  function ttsStop(keep) { if (SYN) SYN.cancel(); if (tts) tts.token++; tts = null; $$('.speaking').forEach(function (e) { e.classList.remove('speaking'); }); if (!keep) { var bar = $('#player'); if (bar) { bar.hidden = true; bar.innerHTML = ''; } document.body.classList.remove('playing'); } }
+  function alertBar(t) { var bar = $('#player'); bar.innerHTML = '<span class="pinfo">' + esc(t) + '</span><button class="btn" id="pclose">Fermer</button>'; bar.hidden = false; $('#pclose').onclick = function () { bar.hidden = true; }; }
+  // lecture d'une fiche : toute la fiche, l'encadré « À retenir » seul, ou les questions-réponses
+  function ficheAudio(fid, mode, art) {
+    var f = F[fid];
+    if (mode === 'qr') {
+      var list = F[fid].cards.map(function (cid) { return { q: strip(CARD[cid].q), a: strip(CARD[cid].a), label: f.title, wait: 6 }; })
+        .concat((OBYF[fid] || []).map(function (id) { var o = OUV[id]; return { q: o.q, a: o.reponse, label: f.title, wait: Math.min(20, 4 + 2 * (o.duree || 2)) }; }));
+      return ttsOpen(qaBlocks(list), f.title + ' : questions');
+    }
+    var bl = articleBlocks(art, mode); bl.unshift({ text: (mode === 'cle' ? 'À retenir. ' : '') + strip(f.th) + '.' });
+    ttsOpen(bl, f.title);
+  }
+  // playlist : les encadrés « À retenir » de plusieurs fiches (programme du jour)
+  function cleBlocks(fids) {
+    var out = [], tmp = document.createElement('div');
+    fids.forEach(function (fid) {
+      tmp.innerHTML = F[fid].html; var cle = $('.cle', tmp); if (!cle) return;
+      out.push({ text: 'Fiche : ' + strip(F[fid].th) + '.', label: F[fid].title });
+      $$('li', cle).forEach(function (li) { if (!li.querySelector('li')) out.push({ text: li.textContent, label: F[fid].title }); });
+    });
+    return out;
+  }
 
   /* ------------------------------------------------------------------ écran de connexion et d'inscription */
   var authBox = $('#auth');
@@ -1410,6 +1677,12 @@
     route();
   }
   window.addEventListener('hashchange', function () { if (!locked()) route(); });
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-cle]'); if (!b) return;
+    var a = b.dataset.cle.split(':'), p = progById(a[0]); if (!p) return;
+    var fids = []; progItems(p, +a[1]).forEach(function (it) { if (!it.partiel && fids.indexOf(it.f) < 0) fids.push(it.f); });
+    ttsOpen(cleBlocks(fids), 'À retenir : ' + (p.court || p.titre));
+  });
   var sform = $('#sform'), sinput = $('#q');
   sform.addEventListener('submit', function (e) { e.preventDefault(); location.hash = '#/recherche?q=' + encodeURIComponent(sinput.value); });
   $('#bmenu').addEventListener('click', function () { app.classList.toggle('menu'); });
